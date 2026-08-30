@@ -1,0 +1,25 @@
+# --- Core numerics & data handling ---
+numpy
+scipy
+pandas
+
+# --- Video / frame decoding and CV ---
+# Frame decoding and metadata extraction go through the system ffmpeg/ffprobe binaries
+# (invoked via subprocess), not a Python binding. opencv-python and PyAV each bundle
+# their own copy of the ffmpeg shared libs; installing both triggers an ObjC
+# libavdevice class-duplication conflict on macOS (confirmed when setting up this env)
+# that can crash silently. Avoid by keeping ffmpeg CLI as the single video I/O path
+# and using opencv only for array-level operations below.
+opencv-python      # descriptor computation, feature matching (ORB/SIFT), RANSAC geometric verification
+
+# --- Plotting (Task 1 interval distributions, similarity-matrix diagnostics, report figures) ---
+matplotlib
+
+# --- Progress bars for long batch loops over thousands of frames ---
+tqdm
+
+# --- Optional: only needed if upgrading the frame descriptor from the SeqSLAM-style
+# baseline to a pretrained embedding. Uncomment if there is time budget left for it.
+# torch
+# torchvision
+# open-clip-torch
