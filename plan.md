@@ -3,6 +3,13 @@
 Execution plan for the take-home. Checkbox legend: `[ ]` todo · `[~]` in progress · `[x]` done — keep it current.
 Code rules live in `CLAUDE.md`; numbers go to `findings.md` with their provenance; choices go to `decisions.md`.
 
+**Revision (2026-08-30, post-review):** cut-order inverted for S4 (SIFT) and v2 (NULL-state DP) — both are now
+*add-if-ahead* in the day-2 buffer, not *cut-if-behind* defaults (§6, §7, §11, §12); they were scoped for someone
+already fluent in DTW/MAGSAC, not a first build. Ground truth reframed: the user labels, Claude does a blind QA
+pass afterward, not a claimed-independent second labeller (§0.2, §8, §13) — the two are not statistically
+independent judges. A dedicated rehearse/defensibility slot added to day 2 (§12) — being able to explain what
+shipped matters more than shipping more.
+
 ## 0. The brief, the weights, the decisions
 
 ### 0.1 Brief (as received)
@@ -44,8 +51,11 @@ Code rules live in `CLAUDE.md`; numbers go to `findings.md` with their provenanc
 - Time budget ≤ 2 days (§12). Docs, code and report in English.
 - Method: classical SeqSLAM-style baseline **and** a pretrained deep descriptor (DINOv2), fused; global monotone
   alignment (DTW) with explicit abstention. Recommendation and alternatives in §11.
-- Ground truth: ~30 anchors labelled blind and independently by the user and by Claude, then merged; disagreement
-  is reported as label noise.
+- Ground truth: ~30 anchors labelled by the user (primary; sheet tool is blind to model output by construction).
+  Claude does a second pass afterward as a **QA/consistency check, not an independent co-labeller** — user and
+  Claude are not statistically independent judges (Claude's visual read can share failure modes with the DINOv2
+  descriptor used in the pipeline itself). User's label is authoritative; Claude's flags get re-checked, not
+  averaged in. See §13.
 - Index convention **H0**: frame `k` = timestamp line `k` = decoded frame `k` of each camera (evidence in §1);
   `mapping.csv` has one row per runA timestamp line (2695), `status=no_video` for lines without a decoded frame.
 
@@ -104,15 +114,19 @@ Tooling
 
 ## 2. Step 0 — Setup & integrity (1:00)
 
-- [ ] `git init`; `.gitignore` for `data/cache/`, `outputs/*.npy`, `report/*.aux|log|out`, `__pycache__`, `.pytest_cache`.
-- [ ] Copy `~/Downloads/SHA256SUMS.txt` → `dataset/SHA256SUMS.txt`.
-- [ ] `pip install pytest ruff pyyaml`; start `pip install torch` (pin the version) in the background.
-- [ ] Package skeleton (`src/routealign/` modules per `CLAUDE.md` §3), `config.yaml`, `Makefile`, `pyproject.toml`
-      (ruff config, `python -m routealign` entry point).
-- [ ] `make verify-data` → `outputs/inspection/integrity.json` (sha256 of all 8 inputs vs manifest).
-- [ ] `make decode`: one sequential ffmpeg pass per file → `data/cache/frames/{run}/{cam}/{k:05d}.jpg` (640×480,
-      q=3, `-fps_mode passthrough`); assert file count == `count_decoded`; record `ffmpeg -version`.
-- Output: repo skeleton, verified inputs, JPEG cache (~640 MB), first entries in `findings.md`.
+- [x] `git init`; `.gitignore` for `data/cache/`, `outputs/*.npy`, `report/*.aux|log|out`, `__pycache__`, `.pytest_cache`.
+- [x] Copy `~/Downloads/SHA256SUMS.txt` → `dataset/SHA256SUMS.txt`.
+- [~] `pip install pytest ruff pyyaml` (done); `pip install torch torchvision` started in the background, unpinned
+      (let pip resolve current stable — see note below), still running as of this checkbox.
+- [x] Package skeleton (`src/routealign/` modules per `CLAUDE.md` §3), `config.yaml`, `Makefile`, `pyproject.toml`
+      (ruff config, `python -m routealign` entry point); editable-installed (`pip install -e .`).
+- [x] `make verify-data` → `outputs/inspection/integrity.json` (sha256 of all 8 inputs vs manifest): 8/8 OK.
+- [x] `make decode`: one sequential ffmpeg pass per file → `data/cache/frames/{run}/{cam}/{k:05d}.jpg` (640×480,
+      q=3, `-fps_mode passthrough`, 0-indexed); JPEG count asserted == `count_decoded` for all 4 files (matched
+      exactly: 2674/2674/2622/2615); `ffmpeg -version` recorded in `findings.md`.
+- Output: repo skeleton, verified inputs (8/8), JPEG cache (323 MB measured, smaller than the ~640 MB estimate),
+  first entries in `findings.md` and `decisions.md`. Note: `pyproject.toml` declares no `[project.dependencies]`
+  — installs still go through `requirements.txt`; revisit if that split becomes awkward.
 
 ## 3. Step 1 — Task 1 characterisation (1:30)
 
@@ -197,7 +211,8 @@ def dtw_open_ends(c: NDArray, lam: float) -> NDArray:
 - [ ] `path_to_mapping`: per runA row, `runB_frame = argmax Ŝ_joint` over the visited columns `[lo, hi]`; widen
       `[lo, hi]` to the runB stationary segment containing `runB_frame` (all those frames show the same place);
       flag `boundary_clamped` for runs stuck at column 0 or NB−1 (the runA tail beyond runB's end).
-- [ ] v2 (stretch, only if day 1 is complete) NULL-state affine-gap DP: score `m = Ŝ_joint − s0` (s0 = 1.0),
+- [ ] v2 (**cut by default** — build only in the day-2 buffer, and only if v1 is shipped, tested, and understood;
+      do not start this while v1 is still unverified) NULL-state affine-gap DP: score `m = Ŝ_joint − s0` (s0 = 1.0),
       states M (match), X (runA frame unmatched), Y (runB frame skipped), penalties `g_open 3.0`, `g_ext 0.5`,
       `rho 0.5` for non-diagonal match steps; row-vectorised with `cumsum`/`maximum.accumulate` like v1; must
       reproduce v1 on gap-free synthetic warps and pass the deletion test (§8) before it ships. Rows in state X get
@@ -205,7 +220,7 @@ def dtw_open_ends(c: NDArray, lam: float) -> NDArray:
 - Not chosen: fixed/linear offset (violates the brief), nearest neighbour only (loop closure + uniform stretches
   alias), HMM with hand-tuned transition matrix (equivalent to v2 with more knobs), full SLAM (no time, no need).
 
-## 7. Step 5 — Verification & confidence (2:00, plus a 2:00 time-box for SIFT)
+## 7. Step 5 — Verification & confidence (2:00; SIFT is cut by default — see below and §12)
 
 Independent evidence per runA row (all become columns of `outputs/mapping_full.csv`):
 
@@ -219,9 +234,11 @@ Independent evidence per runA row (all become columns of `outputs/mapping_full.c
 | `sift_inliers` | RootSIFT (ratio 0.8) + `cv2.USAC_MAGSAC` fundamental matrix on 640×384 gray, assigned pair ±2 | geometric consistency independent of global descriptors |
 | `slope`, `stationary_A/B`, `boundary_clamped`, `ambiguity = hi − lo` | context flags | plateaus and tails are where errors live |
 
-- [ ] SIFT calibration (time-boxed): inlier distribution for correct anchors vs pairs offset by 60–200 frames;
-      "verified" threshold = value at which offset pairs pass ≤ 5 %. Under rain many correct pairs will fail ⇒ use
-      only as positive evidence; if it does not separate, drop it and say so in the report.
+- [ ] SIFT calibration — **cut by default**, not part of the core day-1/day-2 path. Add only in the day-2 buffer
+      (§12) if genuinely ahead: inlier distribution for correct anchors vs pairs offset by 60–200 frames; "verified"
+      threshold = value at which offset pairs pass ≤ 5 %. Under rain many correct pairs will fail ⇒ use only as
+      positive evidence; if it does not separate, drop it and say so in the report. `cam_disagree`, `desc_disagree`
+      and `argmax_disagree` already give multi-signal verification without it — SIFT is upside, not a dependency.
 - [ ] No-match rule (empty `runB_frame`): no video for the row; `ridge_z < tau` (tau from the deletion test,
       default 0.75); `boundary_clamped ∧ ridge_z < 1.5`; `cam_disagree > 30 ∧ desc_disagree > 30`; or DP gap (v2).
 - [ ] Confidence tiers (ordinal; meaning = the reliability table on held-out anchors, *not* a calibrated
@@ -233,7 +250,7 @@ Independent evidence per runA row (all become columns of `outputs/mapping_full.c
       margin_z, cam_disagree, desc_disagree, sift_inliers, slope, runA_has_cam0, runA_has_cam5, runB_has_cam0,
       runB_has_cam5, method`. Schema documented in `outputs/SCHEMA.md` and enforced by `tests/test_mapping_csv.py`.
 
-## 8. Step 6 — Ground truth & evaluation (labelling 2 × 1.5 h in parallel, analysis 1:30)
+## 8. Step 6 — Ground truth & evaluation (user labels 1.5 h blind; Claude QA pass ~0:30 after, not in parallel; analysis 1:30)
 
 - [ ] `gt/labelling_protocol.md`: "same place" = within ±0.5 s of runB travel (±5 frames at 10 Hz); lane offset
       ignored. The sheet tool reads only the frame cache — it never sees model output (blind by construction):
@@ -241,13 +258,15 @@ Independent evidence per runA row (all become columns of `outputs/mapping_full.c
       in ±20 of the coarse pick (41 tiles). Record `runA_frame, runB_best, lo, hi, quality{sure, unsure, no_match},
       note`. Scanning sequentially from the previous anchor's runB position is allowed (route order is a property
       of the data, not of the model).
-- [ ] Anchors (30, labelled by both): stratum S (22): runA 200 … 2500 every ~110 frames with ±20 jitter (fixed
-      seed) + plateau frames 60, 150 + tail frames 2600, 2650. Stratum H (8, reported separately): 2 in the
-      low-texture block, 2 with passing traffic on cam5, 4 at the largest SeqSLAM/DINOv2 path disagreement
-      (positions model-informed, labels still blind).
-- [ ] Merge: agree if `|Δbest| ≤ max(3, half the union width)` → consensus = rounded mean, range = union; else
-      `disputed` (excluded from the headline, listed in the report). Inter-labeller median |Δ| is the label-noise
-      floor — never claim finer accuracy than it.
+- [ ] Anchors (30, labelled by the user; Claude QA pass after — see §0.2): stratum S (22): runA 200 … 2500 every
+      ~110 frames with ±20 jitter (fixed seed) + plateau frames 60, 150 + tail frames 2600, 2650. Stratum H
+      (8, reported separately): 2 in the low-texture block, 2 with passing traffic on cam5, 4 at the largest
+      SeqSLAM/DINOv2 path disagreement (positions model-informed, labels still blind).
+- [ ] Merge: the user's label is the consensus (authoritative). Claude's QA pass flags rows where its read differs
+      by more than `max(3, half the union width)` for the user to re-check by hand; only the user's post-recheck
+      label ships. Report user-vs-Claude agreement as a **QA sanity number**, explicitly not inter-rater
+      reliability or a label-noise floor — they are not independent judges (§13). A true noise floor would need a
+      second independent human on a subset; optional, not required — note its absence in the report if skipped.
 - [ ] Split: 6 dev anchors (threshold sanity only), ~24 test anchors reported with Wilson 95 % CIs
       (e.g. 22/24 → [74 %, 98 %]).
 - [ ] Metrics: error = 0 if the prediction lies in `[lo, hi]`, else distance to the nearest end; hit@2/5/10 frames
@@ -317,9 +336,11 @@ dataset card stating nominal-vs-measured fps, the H0 assumption and the split ru
 | S4 local-feature refinement | SIFT / LightGlue | argmax inliers within ±k of the S2 path | inliers | frame-accurate when moving; doubles as verifier | rain, droplets, repeated façades; slow for all pairs | +3 h (lite: verification only) |
 | S5 odometry / arc-length prior | optical-flow pseudo-distance | align in the distance domain | — | native handling of stops and speed changes | monocular scale drift; complexity | stretch |
 
-Recommendation: **S2 with S4-lite as a secondary cue**. The probe shows the sequence constraint does most of the
-work; the deep descriptor buys robustness on cam5 and the rain-degraded stretches; abstention and the reliability
-table are what make the result defensible.
+Recommendation: **S2 (v1 DTW only) as the committed default.** S4-lite (SIFT) and v2 (NULL-state DP) are
+day-2-buffer upside, not dependencies (§12) — the probe shows the sequence constraint already does most of the
+work, the deep descriptor buys robustness on cam5 and the rain-degraded stretches, and `cam_disagree` /
+`desc_disagree` / `argmax_disagree` give multi-signal verification on their own. Abstention and the reliability
+table are what make the result defensible, not the extra verifiers.
 
 ## 12. Two-day schedule (≈ 9.5 h per day) and cut order
 
@@ -329,22 +350,31 @@ Day 1
   report section.
 - 11:00 SeqSLAM descriptors → similarity → contrast normalisation → DTW → mapping v0; similarity figure; sync test.
 - 13:00 torch + DINOv2 (30-minute cap) → `S_dino` → DTW → compare paths.
-- 14:00 labelling sheet tool (30 min); both labellers label the 30 anchors while `groundtruth.evaluate` is coded.
+- 14:00 labelling sheet tool (30 min); user labels the 30 anchors (blind to predictions) while
+  `groundtruth.evaluate` is coded; Claude's QA pass happens after, in its own sitting, not alongside.
 - 16:30 synthetic warp + deletion tests (pytest), tune `lam`, `tau`, `R`; first accuracy numbers and ablation table.
 - 18:00 confidence features, no-match rule v1, mapping v1, commit.
 
 Day 2
-- 08:30 SIFT + MAGSAC with calibration on anchors; keep or drop; reliability table.
-- 10:00 NULL-state DP only if day 1 is complete; otherwise skip.
-- 11:00 hard-case anchors, failure taxonomy with side-by-side figures.
-- 12:30 Task 3 manifest + schema + dataset card.
-- 13:30 finish tests, `make all` from a clean cache, timings, README.
-- 14:30 report (LaTeX, 4 pages).
+- 08:30 Claude QA labelling pass (blind, after the user's — §8); reconcile, reliability table, ablation table on
+  the full anchor set.
+- 09:30 hard-case anchors (stratum H), failure taxonomy with side-by-side figures.
+- 10:30 Task 3 manifest + schema + dataset card.
+- 11:30 finish tests (`test_align`, `test_mapping_csv`, `test_io`, …), `make all` from a clean cache, timings,
+  README.
+- 12:30 **buffer / catch-up**, absorbs day-1 overrun first. Only if genuinely ahead of schedule: SIFT calibration
+  (§7) then v2 NULL-state DP (§6), in that order — neither is a dependency for anything downstream.
+- 14:00 **rehearse**: read the shipped code and report draft end to end; for every number and every §14 answer,
+  confirm you can explain it without notes. Cut anything you can't explain — a simpler thing you understand beats
+  a fancier thing you don't, at interview.
+- 15:00 report (LaTeX, 4 pages).
 - 17:30 final pytest, archive, buffer.
 
-Cut first if behind: NULL-state DP → SIFT verification → stratum-H anchors beyond 4 → GeM (CLS only) → anchors
-30 → 20 per labeller. Never cut: the T1 table, DTW with abstention, the deletion test, the reliability table,
-`test_align.py`.
+**Add only if ahead** (day-2 buffer, in this order): SIFT verification → NULL-state DP → GeM+CLS ensembling polish.
+**Cut first if behind** (within the default scope): stratum-H anchors beyond 4 → anchors 30 → 20. The rehearse
+slot shrinks last, not first — an answer you can't defend at interview costs more than a smaller anchor set. Never
+cut: the T1 table, DTW v1 with abstention, the deletion test, the reliability table, `test_align.py`, the
+ground-truth-independence caveat in the report.
 
 ## 13. Risks and the proved-vs-assumed ledger
 
@@ -361,6 +391,7 @@ test bounds it); label noise on plateaus (report ranges); loop-closure corners (
 | local time UTC+8 | inferred | scene content (Petaling Jaya banners) |
 | runA 2590–2673 has no runB counterpart | evidenced, to be labelled | probe + tail anchors |
 | confidence tiers are calibrated probabilities | not claimed | n ≈ 24 anchors; ordinal tiers + reliability table instead |
+| user and Claude are independent ground-truth labellers | rejected | Claude's visual read can share failure modes with the DINOv2 descriptor in the pipeline; reframed as user-primary + Claude QA pass, agreement reported as a sanity check, not inter-rater reliability |
 
 ## 14. Interview questions to prepare (one-line answers)
 
@@ -373,8 +404,9 @@ test bounds it); label noise on plateaus (report ranges); loop-closure corners (
    corner blocks); the order constraint turns a global ambiguity into a local one; the ablation quantifies it.
 4. Doesn't DTW assume a fixed or linear offset? — No: a non-parametric monotone warp with free slope, open ends and
    explicit stationary steps.
-5. DTW forces a match everywhere — how do you abstain? — Post-hoc rejection on ridge strength and agreement with
-   thresholds set by the deletion test (v1); NULL-state DP with affine gaps (v2); both measured with precision/recall.
+5. DTW forces a match everywhere — how do you abstain? — Post-hoc rejection on ridge strength and agreement,
+   thresholds set by the deletion test (v1, shipped, measured with precision/recall). NULL-state DP with affine
+   gaps (v2) is a cleaner formulation I scoped out given the time budget — future work, not shipped.
 6. How does a confident wrong match arise and how do you catch it? — Repeated façades, hedges, and the depot at
    both ends; caught by the margin outside the path band, cam0/cam5 and SeqSLAM/DINOv2 disagreement, optionally
    geometric verification; residual failures are shown, not hidden.
@@ -384,8 +416,9 @@ test bounds it); label noise on plateaus (report ranges); loop-closure corners (
    appearance change; the ablation shows what it adds over SeqSLAM; EigenPlaces/AnyLoc-VLAD are the next step.
 9. Why two cameras, and why do side cameras matter? — Independent views of the same position give an agreement cue;
    side views discriminate position finely but suffer lane offset and, on cam5, traffic; fused only after the sync test.
-10. What is your ground truth and how noisy is it? — 30 blind, double-labelled anchors with ranges; inter-labeller
-    median disagreement is the noise floor; Wilson CIs reported.
+10. What is your ground truth and how noisy is it? — 30 anchors I labelled blind to model output, with ranges;
+    Claude did a second blind pass as a QA check afterward — I report that agreement as a sanity number, not
+    inter-rater reliability, since we're not independent judges; Wilson CIs on the accuracy estimate itself.
 11. Where is the mapping least reliable? — Start plateau (many-to-one onto moving runB), runA tail beyond runB's
     truncated end, low-texture stretches, rain-degraded frames, cam5 during passing traffic.
 12. What can be wrong in the Task-1 numbers? — Times depend on the recorder clock; counts depend on how this ffmpeg
@@ -394,5 +427,6 @@ test bounds it); label noise on plateaus (report ranges); loop-closure corners (
     together, contiguous blocks with buffers; never random frames.
 14. B-frames and ordering? — ffmpeg emits display order; counts via `-count_frames`; decode order is irrelevant to
     the mapping.
-15. With another week? — Odometry/GNSS as a prior, local-feature re-ranking (LightGlue), more anchors and a proper
-    calibration set, a per-camera occlusion detector, banded/coarse-to-fine DTW for hour-long logs.
+15. With another week? — NULL-state affine-gap DP (cut for time, §6), odometry/GNSS as a prior, local-feature
+    re-ranking (LightGlue/SIFT, cut for time, §7), more anchors and a genuinely independent second human labeller,
+    a per-camera occlusion detector, banded/coarse-to-fine DTW for hour-long logs.

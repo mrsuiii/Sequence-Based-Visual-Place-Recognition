@@ -1,1 +1,26 @@
-./plan.md
+# generated / cache — regenerate via `make`
+data/cache/
+outputs/*.npy
+
+# LaTeX build artifacts (report.tex is tracked; these are not)
+report/*.aux
+report/*.log
+report/*.out
+report/*.toc
+report/*.fls
+report/*.fdb_latexmk
+report/*.synctex.gz
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# raw dataset — large binaries, provided separately, integrity checked via SHA256SUMS.txt
+dataset/runA/
+dataset/runB/
+
+# OS
+.DS_Store

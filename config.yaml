@@ -1,0 +1,76 @@
+# Single source of parameters (CLAUDE.md §4: "no magic numbers" — every threshold/window/size a
+# module uses must be read from here, with a `# why:` comment at the call site, not hardcoded).
+# Sections below Step 0's scope (descriptors/similarity/align/verify/confidence/groundtruth) hold
+# the values already fixed by plan.md; anything still to be tuned is marked as such.
+
+paths:
+  dataset_dir: dataset
+  cache_dir: data/cache
+  outputs_dir: outputs
+  gt_dir: gt
+  report_dir: report
+
+runs: [runA, runB]
+cameras: [cam0, cam5]
+
+# Step 0
+decode:
+  width: 640
+  height: 480
+  jpeg_quality: 3          # ffmpeg -q:v (2=best .. 31=worst)
+  fps_mode: passthrough    # never resample; one JPEG per decoded frame (CLAUDE.md §5)
+
+# Step 2
+frames:
+  crop_row_frac: 0.8       # keep rows [0, 0.8*H) — drops the wing-mirror/vignette band
+
+# Step 3
+descriptors:
+  seqslam:
+    thumb_w: 64
+    thumb_h: 40
+    patch: 8                # non-overlapping patch side for local (mean, std) normalisation
+  dinov2:
+    model: dinov2_vits14
+    input_w: 448
+    input_h: 280             # multiples of 14 (ViT patch size)
+    device_preference: [mps, cpu]
+
+similarity:
+  contrast_window_candidates: [20, 50, 100]   # R — still to tune on synthetic warps (Step 3)
+
+# Step 4
+align:
+  dtw:
+    lam_candidates: [0.1, 0.25, 0.5, 1.0]
+    lam_default: 0.5
+  nullstate_dp:
+    enabled: false            # cut by default — plan.md §6 revision note; day-2 buffer only
+
+# Step 5
+verify:
+  sift:
+    enabled: false            # cut by default — plan.md §7 revision note; day-2 buffer only
+    ratio_test: 0.8
+  deletion_test:
+    window_frames: 150
+
+confidence:
+  no_match_tau_default: 0.75   # from the deletion test — still to calibrate (Step 5)
+  tiers:                        # ordinal, not a calibrated probability — plan.md §13
+    - {value: 0.9, rule: "ridge_z >= 1.5 and both disagreements <= 3"}
+    - {value: 0.7, rule: "ridge_z >= 1.0 and 2-of-3 agreement cues pass"}
+    - {value: 0.5, rule: "ambiguous_range (inside a plateau)"}
+    - {value: 0.4, rule: "matched but weak (default)"}
+
+# Step 6
+groundtruth:
+  anchors_total: 30
+  stratum_s: 22
+  stratum_h: 8
+  labeller_primary: user     # Claude is a QA pass, not an independent co-labeller — plan.md §0.2, §13
+  match_tolerance_s: 0.5      # "same place" = within +/-0.5 s of runB travel
+
+# Documented assumption, not a fact (CLAUDE.md §5, findings.md): frame k == timestamp line k ==
+# decoded frame k of each camera within a run.
+index_convention: H0

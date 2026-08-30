@@ -18,8 +18,12 @@ matplotlib
 # --- Progress bars for long batch loops over thousands of frames ---
 tqdm
 
-# --- Optional: only needed if upgrading the frame descriptor from the SeqSLAM-style
-# baseline to a pretrained embedding. Uncomment if there is time budget left for it.
-# torch
-# torchvision
-# open-clip-torch
+# --- Dev tooling ---
+pytest
+ruff
+pyyaml
+
+# --- Deep descriptor (R2, DINOv2 via torch.hub) — committed default per plan.md §11, not optional.
+# open-clip-torch is not used; R2 loads DINOv2 through torch.hub directly.
+torch
+torchvision
