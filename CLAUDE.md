@@ -146,3 +146,18 @@ the first run: `pytest`, `ruff`, `pyyaml`, and `torch` (macOS arm64 wheel) for t
 - Definition of done: `outputs/mapping.csv` (2695 runA rows, schema test green), `report/report.pdf`
   (2–4 pages), README reproduction, `make lint test` green, `make all` from a clean cache, findings/decisions
   current, submission archive built.
+
+
+
+
+## 8. Docstring Standard
+
+1. Follow Google Python Style Guide for docstrings.
+2. Explain concisely what a class and/or function does.
+3. List the arguments and public attributes and their data types, exceptions that are triggered by a function, and what the return type is. If any of these are empty or None, omit the section.
+4. If there are class methods that are marked with the `@property` decorator, list them as an attribute. The type should be the property getter method's return type.
+5. No need to list the methods.
+6. No need to list protected or private attributes.
+7. If a function argument has a default, clearly indicate it as optional (e.g. `arg (type, optional)`). In the last sentence of the argument's explanation, state what the default value is (e.g. "Defaults to None").
+8. The above rules apply for both public and protected methods.
+9. For the constructor, no need to put its `Args` section in the class docstring. Only put them inside the `__init__` method's docstring.

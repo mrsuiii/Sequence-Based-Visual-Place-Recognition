@@ -23,6 +23,10 @@ decode:
 # Step 2
 frames:
   crop_row_frac: 0.8       # keep rows [0, 0.8*H) — drops the wing-mirror/vignette band
+  motion_thumb_w: 64        # why: small enough that JPEG noise/minor shake averages out, still
+  motion_thumb_h: 48        #      shows genuine large-scale motion (plan.md §4)
+  stationary_threshold_frac: 0.15   # why: plan.md §4 — both cameras below 15% of their median
+  stationary_min_length: 10          # why: plan.md §4 — run must be >= 10 frames to count
 
 # Step 3
 descriptors:

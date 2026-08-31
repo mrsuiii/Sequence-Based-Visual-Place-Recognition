@@ -153,7 +153,10 @@ per requested figure, each citing the exact command / function:
       last decoded frame at full resolution (truncation check) — see `findings.md`'s "not yet done" note.
       `scan_nals`/`sps_vui` are ffprobe/ffmpeg-`trace_headers`-based (picture/GOP-level and SPS/VUI
       text parsing), not a hand-rolled byte-level Annex-B NAL scanner — see `decisions.md`.
-- [ ] Write the T1 section of the report skeleton immediately (numbers are final).
+- [x] Write the T1 section of the report skeleton immediately (numbers are final).
+      `report/report.tex` → `report.pdf`: §1 (T1) complete, 2 pages total with §2/§3/§4 as marked
+      placeholders — well inside the 2-4 page budget with room to spare for T2 (the largest
+      section). Built via `latex-document-skill`.
 
 **Step 1 result, 2026-08-30:** all core Task 1 figures measured and cross-checked (see
 `findings.md`). Two numbers from the prior exploratory session's informal claims did **not**

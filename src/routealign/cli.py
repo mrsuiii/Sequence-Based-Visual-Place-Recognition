@@ -8,7 +8,7 @@ import argparse
 import json
 import logging
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import numpy as np
@@ -20,7 +20,16 @@ log = logging.getLogger(__name__)
 
 
 def _cmd_verify_data(cfg: Config) -> int:
-    """SHA-256 of every dataset file vs dataset/SHA256SUMS.txt (the exact download-page manifest)."""
+    """Check every dataset file's SHA-256 against dataset/SHA256SUMS.txt.
+
+    Writes the full result to outputs/inspection/integrity.json.
+
+    Args:
+        cfg: Loaded configuration.
+
+    Returns:
+        0 if every file matched, 1 otherwise.
+    """
     dataset_dir = cfg.path("dataset_dir")
     manifest_path = dataset_dir / "SHA256SUMS.txt"
     if not manifest_path.exists():
@@ -60,8 +69,16 @@ def _cmd_verify_data(cfg: Config) -> int:
 
 
 def _cmd_decode(cfg: Config) -> int:
-    """One ffmpeg pass per run/camera -> data/cache/frames/{run}/{cam}/00000.jpg..., checked
-    against a real decode count (measured, not the declared/timestamp-line count)."""
+    """Decode every run/camera to a JPEG cache.
+
+    Checks the written JPEG count against a fresh, independent decode count for each file.
+
+    Args:
+        cfg: Loaded configuration.
+
+    Returns:
+        0 if every file's written count matched, 1 otherwise.
+    """
     dataset_dir = cfg.path("dataset_dir")
     cache_dir = cfg.path("cache_dir") / "frames"
     ok = True
@@ -72,31 +89,50 @@ def _cmd_decode(cfg: Config) -> int:
             print(f"decoding {src} -> {out_dir} ...")
             expected = io_video.count_decoded(src)
             written = io_video.decode_to_jpegs(
-                src, out_dir,
-                width=cfg.decode.width, height=cfg.decode.height,
-                jpeg_quality=cfg.decode.jpeg_quality, fps_mode=cfg.decode.fps_mode,
+                src,
+                out_dir,
+                width=cfg.decode.width,
+                height=cfg.decode.height,
+                jpeg_quality=cfg.decode.jpeg_quality,
+                fps_mode=cfg.decode.fps_mode,
             )
             match = written == expected
             ok = ok and match
-            print(f"  {'OK' if match else 'MISMATCH'}: wrote {written} JPEGs, count_decoded={expected}")
+            status = "OK" if match else "MISMATCH"
+            print(f"  {status}: wrote {written} JPEGs, count_decoded={expected}")
     return 0 if ok else 1
 
 
 def _fmt(x: float | int | None, spec: str = ".2f") -> str:
+    """Format a number for a markdown table cell.
+
+    Args:
+        x: Value to format, or `None`.
+        spec (optional): `format()` spec string. Defaults to `".2f"`.
+
+    Returns:
+        The formatted string, or `"N/A"` if `x` is `None`.
+    """
     return "N/A" if x is None else format(x, spec)
 
 
 def _write_task1_table(rows: list[dict], out_path: Path) -> None:
+    """Render the Task 1 per-camera records into a single markdown summary.
+
+    Args:
+        rows: One record per run/camera, as built by `_cmd_characterise`.
+        out_path: File to write the markdown table to (outputs/inspection/task1_table.md).
+    """
     lines = [
         "# Task 1 — characterisation summary",
         "",
         "`declared fps` below is the one label that traces to a real field about *this file's* "
         "content: the SPS/VUI `time_scale/num_units_in_tick`, independently confirmed against "
         "ffprobe's `r_frame_rate` (the two agree exactly). Two other candidate labels were found, "
-        "investigated and rejected rather than silently omitted — see \"Other frame-rate labels\" "
-        "below and `findings.md`. `declared fps` is still not the actual rate; see `measured fps`, "
-        "computed from `timestamps.txt` interval arithmetic. Full provenance for every figure is in "
-        "the per-camera JSON files next to this table and in `findings.md`.",
+        'investigated and rejected rather than silently omitted — see "Other frame-rate labels" '
+        "below and `findings.md`. `declared fps` is still not the actual rate; see "
+        "`measured fps`, computed from `timestamps.txt` interval arithmetic. Full provenance "
+        "for every figure is in the per-camera JSON files next to this table and in `findings.md`.",
         "",
         "| run/cam | frames (decoded / lines) | resolution | file size | declared fps (nominal) | "
         "measured fps | route time (s) | recorded (UTC) |",
@@ -142,9 +178,18 @@ def _write_task1_table(rows: list[dict], out_path: Path) -> None:
 
 
 def _cmd_characterise(cfg: Config) -> int:
-    """Task 1: frame count, resolution, file size, nominal vs actual fps, route time, recording
-    time, interval distribution (with irregularities) — one JSON per run/camera, a combined
-    markdown table, and figures. Every number states whether it is declared or measured."""
+    """Run Task 1: characterise every run/camera.
+
+    Measures frame count, resolution, file size, frame rate (declared and measured), route time,
+    recording time and the Δt distribution. Writes one JSON per run/camera, a combined markdown
+    table and Δt figures, all under outputs/inspection/.
+
+    Args:
+        cfg: Loaded configuration.
+
+    Returns:
+        0 (always succeeds if the dataset files are readable).
+    """
     dataset_dir = cfg.path("dataset_dir")
     out_dir = cfg.path("outputs_dir") / "inspection"
     fig_dir = out_dir / "figures"
@@ -171,14 +216,16 @@ def _cmd_characterise(cfg: Config) -> int:
 
             span_all_s = (int(ts[-1]) - int(ts[0])) / 1e9
             span_video_s = (int(ft[-1]) - int(ft[0])) / 1e9
-            recorded_utc = datetime.fromtimestamp(int(ts[0]) / 1e9, tz=timezone.utc)
+            recorded_utc = datetime.fromtimestamp(int(ts[0]) / 1e9, tz=UTC)
             bit_rate_bps = (file_size * 8 / span_video_s) if span_video_s > 0 else None
             actual_fps = ((decoded_count - 1) / span_video_s) if span_video_s > 0 else None
 
             record = {
-                "run": run, "camera": cam,
+                "run": run,
+                "camera": cam,
                 "frame_count": {
-                    "declared_nb_frames": None,  # ffprobe nb_frames is N/A for a raw elementary stream
+                    # ffprobe nb_frames is N/A for a raw elementary stream
+                    "declared_nb_frames": None,
                     "timestamp_lines": int(ts.size),
                     "measured_decoded": int(decoded_count),
                     "measured_nal_pictures": int(nal.n_pictures),
@@ -249,11 +296,14 @@ def _cmd_characterise(cfg: Config) -> int:
             rows.append(record)
 
             viz.plot_interval_histogram(
-                dt_ms, stats, title=f"{run}/{cam} — Δt distribution ({dt_ms.size} intervals)",
+                dt_ms,
+                stats,
+                title=f"{run}/{cam} — Δt distribution ({dt_ms.size} intervals)",
                 out_path=fig_dir / f"{run}_{cam}_dt_hist.png",
             )
             viz.plot_interval_vs_index(
-                dt_ms, title=f"{run}/{cam} — Δt vs. interval index",
+                dt_ms,
+                title=f"{run}/{cam} — Δt vs. interval index",
                 out_path=fig_dir / f"{run}_{cam}_dt_vs_index.png",
             )
 
@@ -263,11 +313,24 @@ def _cmd_characterise(cfg: Config) -> int:
 
 
 def _not_implemented(name: str) -> int:
+    """Print a "not implemented" error for a subcommand that has no handler yet.
+
+    Args:
+        name: Subcommand name.
+
+    Returns:
+        1 (always an error).
+    """
     print(f"error: '{name}' is not implemented yet — see plan.md for its Step", file=sys.stderr)
     return 1
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Build the `routealign` argument parser, with one subcommand per Makefile target.
+
+    Returns:
+        The configured parser.
+    """
     p = argparse.ArgumentParser(prog="routealign")
     p.add_argument("--config", default="config.yaml")
     p.add_argument("--limit", type=int, default=None)
@@ -284,6 +347,15 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Entry point for `python -m routealign`.
+
+    Args:
+        argv (optional): Argument list to parse. Defaults to `None`, which makes argparse read
+            `sys.argv`.
+
+    Returns:
+        Process exit code.
+    """
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     args = build_parser().parse_args(argv)
     cfg = load_config(args.config)
