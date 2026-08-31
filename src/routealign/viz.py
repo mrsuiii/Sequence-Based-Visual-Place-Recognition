@@ -65,14 +65,31 @@ def plot_interval_vs_index(dt_ms: NDArray[np.float64], title: str, out_path: str
 
 
 def plot_similarity_matrix(
-    similarity: NDArray[np.float64], path: NDArray[np.int64], out_path: str | Path
+    similarity: NDArray[np.float64],
+    path: NDArray[np.int64],
+    title: str,
+    out_path: str | Path,
 ) -> None:
-    """Save the similarity matrix with the chosen DTW path, rejected spans and corner aliasing
-    visible.
+    """Save a similarity matrix as a heatmap with a path overlaid.
+
+    Generic over what `path` represents: Step 3 calls this with the unconstrained per-row argmax
+    (plan.md §5's "corner aliasing" diagnostic, showing where naive nearest-neighbour matching
+    would jump around); Step 4/5 reuse the same function for the actual DTW path once that exists.
 
     Args:
-        similarity: float64[NA, NB] joint similarity matrix.
-        path: int64[L, 2] DTW path as (i, j) pairs, e.g. from `align.dtw_open_ends`.
-        out_path: File to save the PNG to.
+        similarity: float64[NA, NB] similarity matrix (runA rows, runB columns).
+        path: int64[L, 2] path as (i, j) pairs to overlay.
+        title: Plot title.
+        out_path: File to save the PNG to (parent directories are created if missing).
     """
-    raise NotImplementedError("plot_similarity_matrix: implement in Step 4/5 (plan.md §6-7)")
+    fig, ax = plt.subplots(figsize=(8, 6))
+    im = ax.imshow(similarity, aspect="auto", cmap="viridis", interpolation="nearest")
+    ax.plot(path[:, 1], path[:, 0], color="#E8433D", linewidth=0.8, alpha=0.85)
+    ax.set_xlabel("runB frame")
+    ax.set_ylabel("runA frame")
+    ax.set_title(title)
+    fig.colorbar(im, ax=ax, label="similarity")
+    fig.tight_layout()
+    Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, dpi=120)
+    plt.close(fig)
