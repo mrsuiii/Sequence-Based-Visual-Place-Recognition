@@ -111,7 +111,14 @@ def motion_energy(store: FrameStore, thumb_w: int, thumb_h: int) -> NDArray[np.f
     Returns:
         float64[store.n_frames - 1] mean absolute pixel difference per transition.
     """
-    raise NotImplementedError("motion_energy: implement in Step 2 (plan.md §4)")
+    diffs = np.empty(store.n_frames - 1, dtype=np.float64)
+    for k in range(store.n_frames - 1):
+        gray0 = cv2.resize(store.get_gray(k), (thumb_w, thumb_h), interpolation=cv2.INTER_AREA)
+        gray1 = cv2.resize(store.get_gray(k + 1), (thumb_w, thumb_h), interpolation=cv2.INTER_AREA)
+        diff = cv2.absdiff(gray1, gray0)
+        diff_mean = np.mean(diff)
+        diffs[k] = diff_mean
+    return diffs
 
 
 def stationary_segments(
@@ -138,4 +145,16 @@ def stationary_segments(
     Returns:
         List of `(start, end)` index pairs (inclusive start, exclusive end), one per stationary run.
     """
-    raise NotImplementedError("stationary_segments: implement in Step 2 (plan.md §4)")
+    cam0_threshold = np.median(motion_cam0) * threshold_frac
+    cam5_threshold = np.median(motion_cam5) * threshold_frac
+    is_low = (motion_cam0 < cam0_threshold) & (motion_cam5 < cam5_threshold)
+
+    # pad with False on both sides so a run touching index 0 or the last index still gets a
+    # proper open/close edge; diff on the int-cast array then marks +1 at each run start and
+    # -1 at each run end (np.diff refuses to subtract bool arrays directly).
+    padded = np.concatenate(([False], is_low, [False]))
+    changes = np.diff(padded.astype(np.int8))
+    starts = np.where(changes == 1)[0]
+    ends = np.where(changes == -1)[0]
+
+    return [(int(s), int(e)) for s, e in zip(starts, ends, strict=True) if e - s >= min_length]
