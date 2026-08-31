@@ -147,9 +147,19 @@ per requested figure, each citing the exact command / function:
 | codec / colour | Main, L4.0, reorder 2, DPB 6, HRD present; colour range **unsignalled** | GOP 240, one slice per picture, TRAIL_N/TRAIL_R pattern |
 | count discrepancy | — | lines − decoded = 21/21/41/48; tail-loss evidence; H0 stated as an assumption with its consequence if wrong (a constant time shift; the visual alignment is unaffected) |
 
-- [ ] `timestamps.interval_stats`, `io_video.probe/scan_nals/sps_vui`, `viz` figures: Δt histograms, Δt vs time,
-      frame strip around each gap, last decoded frame at full resolution (truncation check).
+- [~] `timestamps.interval_stats`, `io_video.probe/scan_nals/sps_vui` implemented and run for real on
+      all 4 files (`make characterise` → `outputs/inspection/{run}_{cam}.json` + `task1_table.md`).
+      `viz`: Δt histogram + Δt-vs-index done for all 4 files. Not done: frame strip around each gap,
+      last decoded frame at full resolution (truncation check) — see `findings.md`'s "not yet done" note.
+      `scan_nals`/`sps_vui` are ffprobe/ffmpeg-`trace_headers`-based (picture/GOP-level and SPS/VUI
+      text parsing), not a hand-rolled byte-level Annex-B NAL scanner — see `decisions.md`.
 - [ ] Write the T1 section of the report skeleton immediately (numbers are final).
+
+**Step 1 result, 2026-08-30:** all core Task 1 figures measured and cross-checked (see
+`findings.md`). Two numbers from the prior exploratory session's informal claims did **not**
+reproduce (GOP size 250 not 240; Δt lag-1 autocorrelation −0.137 not −0.42/−0.46 on runA/cam0) —
+this repo's measured values are treated as authoritative since they have runnable code behind
+them; flagged rather than silently overwritten.
 
 ## 4. Step 2 — Preprocessing & sync (1:00)
 

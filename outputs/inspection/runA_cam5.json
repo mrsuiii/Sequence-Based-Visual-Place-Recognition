@@ -1,0 +1,110 @@
+{
+  "run": "runA",
+  "camera": "cam5",
+  "frame_count": {
+    "declared_nb_frames": null,
+    "timestamp_lines": 2695,
+    "measured_decoded": 2674,
+    "measured_nal_pictures": 2674,
+    "discrepancy_lines_minus_decoded": 21
+  },
+  "resolution": {
+    "declared_ffprobe_wh": [
+      1440,
+      1080
+    ],
+    "declared_sps_coded_wh": [
+      1440,
+      1088
+    ],
+    "declared_cropped_wh": [
+      1440,
+      1080
+    ],
+    "pix_fmt": "yuv420p"
+  },
+  "file_size_bytes": 121896960,
+  "frame_rate": {
+    "declared_nominal_fps": 10.0,
+    "declared_nominal_source": "SPS/VUI time_scale/num_units_in_tick (ffmpeg -bsf:v trace_headers); independently matches ffprobe's r_frame_rate exactly for this file",
+    "measured_actual_fps": 9.99248946222922,
+    "measured_median_interval_ms": 99.946811,
+    "measured_source": "timestamps.txt interval arithmetic: (decoded_count - 1) / video_covered_span_s",
+    "other_labels_investigated_and_rejected": {
+      "filename_token": {
+        "value": 20,
+        "reason_rejected": "unexplained -- no field anywhere in the file confirms this represents fps; listed only because of its position in the filename, not because its meaning is known"
+      },
+      "ffprobe_avg_frame_rate": {
+        "value": "25/1",
+        "reason_rejected": "proven generic fallback for headerless elementary streams: a synthetic test file encoded at a known true 17 fps still reports avg_frame_rate=25/1, identical to this file -- see findings.md"
+      }
+    }
+  },
+  "route_time_s": {
+    "timestamp_span_all_lines": 269.594502372,
+    "video_covered_span_H0": 267.500907567
+  },
+  "recorded_at_utc": "2025-02-28T06:24:09.579560+00:00",
+  "interval_stats_ms": {
+    "n_intervals": 2694,
+    "median_ms": 99.946811,
+    "mean_ms": 100.07219835634744,
+    "std_ms": 4.694491772089332,
+    "min_ms": 88.82909,
+    "max_ms": 300.823183,
+    "p05_ms": 95.52609439999999,
+    "p95_ms": 104.60460404999999,
+    "n_outside_90_110ms": 7,
+    "gaps_over_150ms": [
+      {
+        "index": 4,
+        "dt_ms": 300.823183
+      }
+    ],
+    "lag1_autocorr": -0.1365037314054477
+  },
+  "bit_rate_bps_measured": 3645504.1923764357,
+  "codec": {
+    "codec_name": "hevc",
+    "level_idc": 120,
+    "level": 4.0,
+    "max_dec_pic_buffering": 6,
+    "max_num_reorder_pics": 2,
+    "video_signal_type_present": false
+  },
+  "gop": {
+    "n_idr": 11,
+    "idr_indices": [
+      0,
+      250,
+      500,
+      750,
+      1000,
+      1250,
+      1500,
+      1750,
+      2000,
+      2250,
+      2500
+    ],
+    "gop_sizes": [
+      250,
+      250,
+      250,
+      250,
+      250,
+      250,
+      250,
+      250,
+      250,
+      250
+    ],
+    "pict_type_counts": {
+      "I": 11,
+      "B": 1989,
+      "P": 674
+    }
+  },
+  "file_size_mod_262144": 0
+}
