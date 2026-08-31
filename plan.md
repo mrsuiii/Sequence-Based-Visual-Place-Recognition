@@ -166,26 +166,39 @@ them; flagged rather than silently overwritten.
 
 ## 4. Step 2 — Preprocessing & sync (1:00)
 
-- [ ] `FrameStore` over the JPEG cache; gray/RGB crops of rows [0, 384) of 640×480 (drops mirror/vignette band).
-- [ ] `motion_energy` per camera (mean |Δ| on 64×48 gray); `stationary_segments` = *both* cameras below 15 % of
-      their median for ≥ 10 frames. Static-mask sanity figure (per-pixel temporal std).
+- [x] `FrameStore` over the JPEG cache; gray/RGB crops of rows [0, 384) of 640×480 (drops mirror/vignette band).
+      Implemented (LRU cache, `crop_row_frac` from config.yaml), smoke-tested on real data.
+- [x] `motion_energy` per camera (mean |Δ| on 64×48 gray); `stationary_segments` = *both* cameras below 15 % of
+      their median for ≥ 10 frames. Implemented and validated: runA measures a stationary run of `(0, 173)`,
+      matching the prior session's claim exactly (findings.md). [~] Static-mask sanity figure (per-pixel
+      temporal std) — not done yet.
 - [ ] Sync test (records evidence for H0): stop/onset event indices per camera; cam0-only vs cam5-only alignment
       paths (§6) must agree — this bounds the *differential* cam0/cam5 offset (a common offset would cancel; say so).
+      Deferred — needs Step 4's alignment paths to exist first.
 
 ## 5. Step 3 — Representation (1:30)
 
-- [ ] R1 SeqSLAM: crop → 64×40 (`INTER_AREA`), 8×8 non-overlapping patches, `(p − mean) / (std + 1)` in 0..255
-      units, clip ±3, flatten (2560-d), L2. `make describe FEAT=seqslam`.
-- [ ] R2 DINOv2 ViT-S/14: `torch.hub.load('facebookresearch/dinov2', 'dinov2_vits14', trust_repo=True)`
-      (fallback: `timm` `vit_small_patch14_dinov2.lvd142m`); crop → 448×280 (multiples of 14), ImageNet mean/std,
-      fp32, `no_grad`, batch 32 on `mps` (cpu fallback); descriptor = L2(concat(L2(CLS), L2(GeM₃(patch tokens))))
-      768-d; CLS-only is the cut-first fallback. Record model/commit in the cache sidecar. 30-minute cap on
-      install/hub trouble, then continue with R1 only and say so.
-- [ ] Similarity per camera and descriptor: cosine → SeqSLAM local contrast normalisation along runB per runA row
+- [x] R1 SeqSLAM: crop → 64×40 (`INTER_AREA`), 8×8 non-overlapping patches, `(p − mean) / (std + 1)` in 0..255
+      units, clip ±3, flatten (2560-d), L2. Implemented (`descriptors.seqslam_descriptors`), verified: cosine
+      similarity 0.997–0.999 between 3 known-same-place frames vs 0.16–0.21 against 2 different-place frames
+      (findings.md). `make describe FEAT=seqslam` CLI wiring not done yet.
+- [x] R2 DINOv2 ViT-S/14: `torch.hub.load('facebookresearch/dinov2', 'dinov2_vits14', trust_repo=True)`;
+      crop → 448×280 (multiples of 14), ImageNet mean/std, fp32, `no_grad`, batch 32, device from
+      `torch.backends.mps.is_available()` (cpu fallback); descriptor = L2(concat(L2(CLS), L2(GeM₃(patch tokens))))
+      768-d. Implemented (user-led, `descriptors.dino_descriptors` + `_gem_pool`). Not yet run end-to-end in this
+      repo's own environment — `torch.hub.load`'s repo-code fetch is blocked in the assistant's sandboxed shell
+      (network allowlist issue, confirmed via `curl` failing on `codeload.github.com` too); user to confirm it
+      loads in their own terminal and that `forward_features`'s dict keys match
+      (`x_norm_clstoken`/`x_norm_patchtokens`) before trusting real output.
+- [x] Similarity per camera and descriptor: cosine → SeqSLAM local contrast normalisation along runB per runA row
       (window R ∈ {20, 50, 100} tuned on synthetic warps; `scipy.ndimage.uniform_filter1d` on S and S²), clip ±3 ⇒
-      z-units comparable across descriptors/cameras. `Ŝ_joint = weighted mean` (cam0 ≥ cam5; weights from the
-      synthetic tests) — only after the sync test passes.
-- [ ] Diagnostics figure: matrix + unconstrained argmax per camera/descriptor (corner aliasing visible).
+      z-units comparable across descriptors/cameras. Implemented (`similarity.py`: `cosine`, `local_contrast_norm`,
+      `fuse`) and run for real on full runA/runB cam0 (findings.md). `Ŝ_joint = weighted mean` (cam0 ≥ cam5;
+      weights from the synthetic tests) — `fuse` exists but combining cam0+cam5 is still gated on the sync test
+      (§4), not yet done.
+- [x] Diagnostics figure: matrix + unconstrained argmax per camera/descriptor (corner aliasing visible).
+      `viz.plot_similarity_matrix` implemented (generic path-overlay, reused by Step 4/5 for the real DTW path
+      later) and run on real data — corner aliasing is visible exactly as predicted (findings.md).
 - Why these two: R1 is dependency-free and already finds the ridge; R2 is the strongest zero-training feature under
   appearance change (backbone of AnyLoc/SALAD). Not chosen: NetVLAD/CosPlace/EigenPlaces (extra weights, marginal
   gain expected here), CLIP (weaker geometry), training anything (no labels, no time).

@@ -135,3 +135,86 @@ plausible, evidenced-but-unproven hypothesis, not a measured fact.
 full-resolution last-decoded-frame truncation check (both listed in `plan.md` §3) were scoped out
 of this pass in favour of the two core figures (Δt histogram, Δt vs. index) and the byte-level NAL
 scan discussed above; revisit if there's time before the report is finalised.
+
+## Step 2 — Preprocessing & sync (2026-08-31)
+
+`FrameStore` (JPEG-cache read-through, LRU cache, row crop), `motion_energy` (mean |Δ| on
+`thumb_w`×`thumb_h`-downsampled gray, via `cv2.resize(..., INTER_AREA)` + `cv2.absdiff`) and
+`stationary_segments` (both cameras below `threshold_frac` of their own median, run length
+≥ `min_length`) implemented in `src/routealign/frames.py`, written primarily by the user with
+review/debugging support.
+
+**Stationary segment measured for runA (cam0 + cam5, first 600 frames, `threshold_frac=0.15`,
+`min_length=10`): (0, 173)** — matches the prior exploratory session's informal claim ("runA
+0–173, cam0") exactly. Unlike the two Step 1 numbers that did *not* reproduce (GOP size,
+autocorrelation), this one does — worth noting precisely because it shows the earlier session
+wasn't uniformly unreliable, just not uniformly verified either; each claim still needs its own
+check. This number came from an ad-hoc verification script during development, not yet a
+reproducible `make` target — Step 2 has no CLI subcommand of its own (`frames.py` is a utility
+module consumed by Step 3+, per CLAUDE.md's dependency graph); it becomes reproducible once
+`describe`/`align` actually call these functions.
+
+**A real bug caught and fixed during development, not just a style note**: an early draft called
+`cv2.absdiff()` with a single (already-subtracted) array instead of two source arrays — a
+`TypeError` at the exact call site the `uint8`-wraparound gotcha warns about, confirmed by running
+it (`cv2.error: absdiff() missing required argument 'src2'`). Fixed to
+`cv2.absdiff(gray1, gray0)`, letting OpenCV do the subtraction itself.
+
+**Not yet done in Step 2** — the static-mask sanity figure (per-pixel temporal std, `plan.md` §4)
+and the cam0/cam5 sync test (needs Step 4's alignment paths to compare) are both deferred.
+
+**Threshold-method caveat, worth remembering before reusing this code**: `threshold_frac × median`
+assumes the *majority* of the array represents normal (moving) motion. Tested this deliberately on
+a 600-frame window rather than a short early-frame slice — a small window landing mostly inside
+the stationary period makes the median itself low, breaking the threshold (confirmed by a failed
+first test attempt: a 60-frame window returned no segments at all, because ~all of it was still
+inside the stationary period). Always run this over a large enough span that "moving" is the
+majority, not a short arbitrary slice.
+
+## Step 3 — Representation, R1 SeqSLAM (2026-08-31)
+
+`seqslam_descriptors` implemented in `src/routealign/descriptors.py` (thumb_w/thumb_h/patch taken
+as explicit params, not hardcoded, matching `motion_energy`'s pattern -- callers fill them from
+config.yaml `descriptors.seqslam.*`). Non-overlapping patch normalisation done via a
+`reshape(h//patch, patch, w//patch, patch)` + reduce-over-axes-(1,3) trick (vectorised, no
+per-patch Python loop).
+
+**Verified on real data**: cosine similarity 0.997–0.999 between runA frames 0, 1, 5 (all inside
+the confirmed stationary run `(0, 173)` from Step 2 -- same physical place) vs 0.158–0.213 against
+frames 1000 and 2000 (different points on the route). The descriptor separates same-place from
+different-place frames correctly using nothing but raw cosine similarity, before any alignment
+algorithm exists yet -- a good sign for Step 4. R2 (DINOv2) is in progress (user-led).
+
+## Step 3 — Similarity, diagnostics, and R2 status (2026-08-31)
+
+**R2 (DINOv2)**: `dino_descriptors` + `_gem_pool` implemented (user-led, with review support).
+`_gem_pool` verified in isolation on synthetic data with strongly negative values (min -10.17) --
+no NaN/Inf, confirming the `eps`-clamp-before-power fix is necessary and correct (patch tokens
+post-LayerNorm can be negative; a fractional power of a negative mean is undefined). The full
+function has **not** been run end-to-end on real data in this repo: `torch.hub.load`'s GitHub
+repo-code fetch (`codeload.github.com`) returns `400: Bad Request` in the assistant's sandboxed
+shell -- reproduced with both Python's `urllib` and a bare `curl` request, so this is a network
+allowlist restriction of the sandbox, not a torch.hub or DINOv2 hosting bug (the weight file
+itself, hosted separately at `dl.fbaipublicfiles.com`, downloaded successfully: 88 283 115 bytes).
+**Not yet verified**: that `forward_features()`'s returned dict actually uses the key names
+`x_norm_clstoken`/`x_norm_patchtokens` assumed in the code -- this is standard, well-documented
+DINOv2 API from training-era knowledge, not something clicked-tested this session. The user should
+confirm both (a) that `torch.hub.load` succeeds in their own terminal, and (b) the exact dict keys,
+before trusting real R2 output.
+
+**Similarity module (`similarity.py`)** -- `cosine`, `local_contrast_norm`, `fuse` -- implemented
+and run for real: full runA vs.\ full runB, cam0, SeqSLAM descriptors (2674×2622 matrix).
+`cosine`: 0.19 s. `local_contrast_norm` (window=50, via two `uniform_filter1d` passes rather than
+a per-column loop): 0.10 s. Both comfortably fast at full scale.
+
+**Diagnostic figure** (`viz.plot_similarity_matrix`, generic over what path is overlaid --
+reused later for the real DTW path): plotted with the *unconstrained* per-row argmax (no
+monotonicity constraint) over the z-scored similarity matrix --
+`outputs/inspection/figures/step3_similarity_argmax_diagnostic.png`. Two things are visible
+directly in real data, not just predicted from theory: (1) a genuine diagonal ridge (runA~700
+to~2000 tracks runB~0 to~1700; a second diagonal segment covers the tail), confirming the SeqSLAM
+descriptor does carry real place-matching signal; (2) heavy horizontal banding, worst at the very
+top and bottom rows (runA near 0 and near its end) where a single runB column attracts the argmax
+from many unrelated runA rows -- exactly the "corner aliasing" plan.md predicted from the shared
+depot at both ends of the loop, now shown, not assumed. This is the concrete, in-data justification
+for needing Step 4's monotonicity constraint rather than per-frame nearest-neighbour matching.
