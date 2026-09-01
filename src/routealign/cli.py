@@ -12,9 +12,23 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
+from numpy.typing import NDArray
 
-from . import io_video, timestamps, viz
+from . import (
+    align,
+    confidence,
+    descriptors,
+    frames,
+    groundtruth,
+    io_video,
+    similarity,
+    timestamps,
+    verify,
+    viz,
+)
 from .config import Config, load_config
+from .frames import FrameStore
 
 log = logging.getLogger(__name__)
 
@@ -312,6 +326,434 @@ def _cmd_characterise(cfg: Config) -> int:
     return 0
 
 
+def _open_store(cfg: Config, run: str, cam: str) -> FrameStore:
+    """Open a `FrameStore` for one run/camera using config.yaml's crop setting.
+
+    Args:
+        cfg: Loaded configuration.
+        run: Run id.
+        cam: Camera id.
+
+    Returns:
+        The opened frame store.
+    """
+    return FrameStore(
+        cfg.path("cache_dir") / "frames", run, cam, crop_row_frac=cfg.raw["frames"]["crop_row_frac"]
+    )
+
+
+def _seqslam_desc(
+    cfg: Config, run: str, cam: str, limit: int | None, force: bool
+) -> tuple[NDArray[np.float32], int]:
+    """Compute-or-load one run/camera's SeqSLAM descriptors, capped at `limit` frames.
+
+    Shared by `describe` and `align` so the cache key logic lives in exactly one place.
+
+    Args:
+        cfg: Loaded configuration.
+        run: Run id.
+        cam: Camera id.
+        limit: Cap on frame count (smoke runs), or `None` for the full run.
+        force: Recompute even if a cache entry exists.
+
+    Returns:
+        `(descriptors, n)`: the descriptor array and the frame count actually used.
+    """
+    store = _open_store(cfg, run, cam)
+    n = min(limit, store.n_frames) if limit else store.n_frames
+    d = cfg.raw["descriptors"]["seqslam"]
+    key = f"desc_seqslam_{run}_{cam}_n{n}_w{d['thumb_w']}_h{d['thumb_h']}_p{d['patch']}"
+    arr = descriptors.cached(
+        lambda: descriptors.seqslam_descriptors(
+            store, np.arange(n, dtype=np.int64), d["thumb_w"], d["thumb_h"], d["patch"]
+        ),
+        key,
+        cfg.path("cache_dir"),
+        extra={"params": d, "run": run, "cam": cam, "n": n},
+        force=force,
+    )
+    return arr, n
+
+
+def _dinov2_desc(
+    cfg: Config, run: str, cam: str, limit: int | None, force: bool
+) -> tuple[NDArray[np.float32], int]:
+    """Compute-or-load one run/camera's DINOv2 descriptors, capped at `limit` frames.
+
+    Shared by `describe` and `align`, mirroring `_seqslam_desc`.
+
+    Args:
+        cfg: Loaded configuration.
+        run: Run id.
+        cam: Camera id.
+        limit: Cap on frame count (smoke runs), or `None` for the full run.
+        force: Recompute even if a cache entry exists.
+
+    Returns:
+        `(descriptors, n)`: the descriptor array and the frame count actually used.
+    """
+    store = _open_store(cfg, run, cam)
+    n = min(limit, store.n_frames) if limit else store.n_frames
+    d = cfg.raw["descriptors"]["dinov2"]
+    key = f"desc_dinov2_{run}_{cam}_n{n}_{d['model']}"
+    arr = descriptors.cached(
+        lambda: descriptors.dino_descriptors(
+            store, np.arange(n, dtype=np.int64), model_name=d["model"]
+        ),
+        key,
+        cfg.path("cache_dir"),
+        extra={"params": d, "run": run, "cam": cam, "n": n},
+        force=force,
+    )
+    return arr, n
+
+
+def _cmd_describe(cfg: Config, feat: str | None, limit: int | None, force: bool) -> int:
+    """Compute and cache per-frame descriptors for every run/camera.
+
+    DINOv2 (`--feat dinov2`) needs `torch.hub` network access to fetch weights on first use;
+    if that is unavailable in this environment, it fails loudly here rather than silently
+    falling back (CLAUDE.md §4) -- re-run with network access, or use `--feat seqslam` only.
+
+    Args:
+        cfg: Loaded configuration.
+        feat: `"seqslam"`, `"dinov2"`, or `None` for both.
+        limit: Cap on frame count per run/camera (smoke runs), or `None` for the full run.
+        force: Recompute even if a cache entry exists.
+
+    Returns:
+        0 on success.
+    """
+    feats = [feat] if feat else ["seqslam", "dinov2"]
+    for f in feats:
+        desc_fn = _seqslam_desc if f == "seqslam" else _dinov2_desc
+        for run in cfg.runs:
+            for cam in cfg.cameras:
+                arr, n = desc_fn(cfg, run, cam, limit, force)
+                print(f"{f} {run}/{cam}: {arr.shape} {arr.dtype} (n={n})")
+    return 0
+
+
+def _cmd_align(cfg: Config, limit: int | None, force: bool) -> int:
+    """Compute per-camera, per-descriptor and fused similarity + DTW paths; write a draft mapping.
+
+    Two-stage fusion, symmetric in camera and descriptor: per (camera, descriptor) similarity is
+    fused across descriptors within each camera (-> `S_cam0`/`S_cam5`, feeds `cam_disagree`) and
+    across cameras within each descriptor (-> `S_seqslam`/`S_dinov2`, feeds `desc_disagree`); the
+    full joint fusion (`S_joint`) combines all four and is what the draft mapping is built from.
+
+    Args:
+        cfg: Loaded configuration.
+        limit: Cap on frame count per run (smoke runs), or `None` for the full run.
+        force: Recompute even if a cache entry exists.
+
+    Returns:
+        0 on success.
+    """
+    # window=50 (tuned for SeqSLAM's patch-level noise) collapses DINOv2's DTW path onto a
+    # single attractor column -- each descriptor gets its own window (decisions.md D10).
+    window_cfg = {
+        "seqslam": cfg.raw["similarity"]["contrast_window_seqslam"],
+        "dinov2": cfg.raw["similarity"]["contrast_window_dinov2"],
+    }
+    cam_weights_cfg = cfg.raw["similarity"]["camera_weights"]
+    desc_weights_cfg = cfg.raw["similarity"]["descriptor_weights"]
+    lam = cfg.raw["align"]["dtw"]["lam_default"]
+    cache_dir = cfg.path("cache_dir")
+    feats = ("seqslam", "dinov2")
+    desc_fn = {"seqslam": _seqslam_desc, "dinov2": _dinov2_desc}
+
+    raw_s: dict[tuple[str, str], NDArray[np.float64]] = {}
+    n_b_max = 0
+    for cam in cfg.cameras:
+        for feat in feats:
+            desc_a, n_a = desc_fn[feat](cfg, "runA", cam, limit, force)
+            desc_b, n_b = desc_fn[feat](cfg, "runB", cam, limit, force)
+            print(f"{feat} {cam}: runA n={n_a}, runB n={n_b}")
+            raw_s[(cam, feat)] = similarity.local_contrast_norm(
+                similarity.cosine(desc_a, desc_b), window=window_cfg[feat]
+            )
+            n_b_max = max(n_b_max, n_b)
+
+    # cam0 and cam5 share one timestamp file (H0: same column index = same nominal instant,
+    # CLAUDE.md §5), but can have different decoded counts (measured: runB cam0=2622,
+    # cam5=2615, findings.md) -- pad the shorter camera's columns with the worst possible
+    # z-score (-3) rather than truncating both to the shorter length, so a camera that never
+    # decoded those frames simply casts no vote there instead of silently losing real cam0
+    # evidence for columns cam5 never had (decisions.md).
+    for key, s in raw_s.items():
+        if s.shape[1] < n_b_max:
+            pad = np.full((s.shape[0], n_b_max - s.shape[1]), -3.0, dtype=np.float64)
+            raw_s[key] = np.concatenate([s, pad], axis=1)
+
+    cam_weights = np.array([cam_weights_cfg[c] for c in cfg.cameras], dtype=np.float64)
+    desc_weights = np.array([desc_weights_cfg[f] for f in feats], dtype=np.float64)
+
+    per_cam = {
+        cam: similarity.fuse([raw_s[(cam, f)] for f in feats], desc_weights) for cam in cfg.cameras
+    }
+    per_feat = {
+        f: similarity.fuse([raw_s[(c, f)] for c in cfg.cameras], cam_weights) for f in feats
+    }
+    s_joint = similarity.fuse([per_cam[c] for c in cfg.cameras], cam_weights)
+
+    cost_joint = 3.0 - np.clip(s_joint, -3.0, 3.0)
+    path_joint = align.dtw_open_ends(cost_joint, lam=lam)
+    print(f"joint DTW: {s_joint.shape} -> path length {len(path_joint)}")
+
+    np.save(cache_dir / "S_joint.npy", s_joint)
+    np.save(cache_dir / "path_joint.npy", path_joint)
+    for cam, s in per_cam.items():
+        cost = 3.0 - np.clip(s, -3.0, 3.0)
+        path = align.dtw_open_ends(cost, lam=lam)
+        np.save(cache_dir / f"S_{cam}.npy", s)
+        np.save(cache_dir / f"path_{cam}.npy", path)
+    for feat, s in per_feat.items():
+        cost = 3.0 - np.clip(s, -3.0, 3.0)
+        path = align.dtw_open_ends(cost, lam=lam)
+        np.save(cache_dir / f"S_{feat}.npy", s)
+        np.save(cache_dir / f"path_{feat}.npy", path)
+
+    # runB stationary segments, to widen path_to_mapping's [lo, hi]. frames.stationary_segments
+    # returns Python-slice convention (end EXCLUSIVE); path_to_mapping's stationary_b expects
+    # inclusive (lo, hi) pairs (its docstring/tests) -- convert once, here, at the boundary
+    # between the two conventions (decisions.md), rather than silently being off-by-one.
+    store_b0, store_b5 = _open_store(cfg, "runB", "cam0"), _open_store(cfg, "runB", "cam5")
+    motion_b0 = frames.motion_energy(
+        store_b0, cfg.raw["frames"]["motion_thumb_w"], cfg.raw["frames"]["motion_thumb_h"]
+    )
+    motion_b5 = frames.motion_energy(
+        store_b5, cfg.raw["frames"]["motion_thumb_w"], cfg.raw["frames"]["motion_thumb_h"]
+    )
+    n_common = min(motion_b0.size, motion_b5.size)
+    stationary_b_exclusive = frames.stationary_segments(
+        motion_b0[:n_common],
+        motion_b5[:n_common],
+        cfg.raw["frames"]["stationary_threshold_frac"],
+        cfg.raw["frames"]["stationary_min_length"],
+    )
+    stationary_b = [(s, e - 1) for s, e in stationary_b_exclusive]
+
+    mapping_draft = align.path_to_mapping(path_joint, s_joint, stationary_b)
+    out_dir = cfg.path("outputs_dir")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    draft_path = out_dir / "mapping_draft.csv"
+    mapping_draft.to_csv(draft_path, index=False)
+    print(f"wrote draft mapping ({len(mapping_draft)} rows) -> {draft_path}")
+    return 0
+
+
+def _iso_utc(ns: int) -> str:
+    """Format an int64-nanosecond epoch timestamp as an ISO-8601 UTC string.
+
+    Args:
+        ns: Nanoseconds since the Unix epoch.
+
+    Returns:
+        ISO-8601 string, e.g. `"2025-02-28T06:24:09.580000+00:00"`.
+    """
+    return datetime.fromtimestamp(ns / 1e9, tz=UTC).isoformat()
+
+
+def _cmd_verify(cfg: Config) -> int:
+    """Add agreement cues and confidence to the draft mapping; write outputs/mapping.csv.
+
+    Reads the draft mapping and cached paths/similarity `align` wrote.
+
+    Args:
+        cfg: Loaded configuration.
+
+    Raises:
+        FileNotFoundError: If `align` has not been run yet (no cached draft/paths to read).
+
+    Returns:
+        0 on success.
+    """
+    cache_dir = cfg.path("cache_dir")
+    out_dir = cfg.path("outputs_dir")
+    draft_path = out_dir / "mapping_draft.csv"
+    if not draft_path.exists():
+        raise FileNotFoundError(f"{draft_path} not found -- run `align` first")
+
+    mapping = pd.read_csv(draft_path)
+    s_joint = np.load(cache_dir / "S_joint.npy")
+    path_joint = np.load(cache_dir / "path_joint.npy")
+    path_cam0 = np.load(cache_dir / f"path_{cfg.cameras[0]}.npy")
+    path_cam5 = np.load(cache_dir / f"path_{cfg.cameras[1]}.npy")
+    path_seqslam = np.load(cache_dir / "path_seqslam.npy")
+    path_dinov2 = np.load(cache_dir / "path_dinov2.npy")
+    n_a = s_joint.shape[0]
+
+    mapping["ridge_z"] = verify.ridge_strength(
+        s_joint, path_joint, window=cfg.raw["verify"]["ridge_window"]
+    )
+    mapping["margin_z"] = verify.margin(s_joint, path_joint, band=cfg.raw["verify"]["margin_band"])
+    mapping["cam_disagree"] = verify.path_disagreement(path_cam0, path_cam5)
+    mapping["desc_disagree"] = verify.path_disagreement(path_seqslam, path_dinov2)
+
+    # local_slope is one value per *path point* (align.py docstring); reduce to one per runA
+    # row via the same last-visited-point convention path_to_mapping/_path_to_row_j already use
+    slope_per_point = align.local_slope(path_joint, window=cfg.raw["align"]["local_slope_window"])
+    row_edges = np.searchsorted(path_joint[:, 0], np.arange(n_a + 1))
+    mapping["slope"] = slope_per_point[row_edges[1:] - 1]
+
+    argmax_per_row = np.argmax(s_joint, axis=1).astype(np.int32)
+    argmax_path = np.column_stack([np.arange(n_a, dtype=np.int32), argmax_per_row])
+    mapping["argmax_disagree"] = verify.path_disagreement(path_joint, argmax_path)
+
+    mapping["sift_inliers"] = np.nan  # SIFT cut by default (plan.md §7)
+    mapping["ambiguity"] = mapping["hi"] - mapping["lo"]
+    mapping["ambiguous_range"] = mapping["ambiguity"] > 0
+    mapping["no_video"] = False  # every row here came from a real decoded frame (align's n_a)
+
+    fused = confidence.fuse_confidence(mapping, tau=cfg.raw["confidence"]["no_match_tau_default"])
+
+    store_a0, store_a5 = _open_store(cfg, "runA", "cam0"), _open_store(cfg, "runA", "cam5")
+    store_b0, store_b5 = _open_store(cfg, "runB", "cam0"), _open_store(cfg, "runB", "cam5")
+    fused["runA_has_cam0"] = fused["runA_frame"] < store_a0.n_frames
+    fused["runA_has_cam5"] = fused["runA_frame"] < store_a5.n_frames
+    fused["runB_has_cam0"] = fused["runB_frame"] < store_b0.n_frames
+    fused["runB_has_cam5"] = fused["runB_frame"] < store_b5.n_frames
+    fused["method"] = "seqslam+dinov2"
+
+    ts_a = timestamps.load_timestamps(
+        cfg.path("dataset_dir") / "runA" / "cam0_20_yuv420p_output.hevc.timestamps.txt"
+    )
+    ts_b = timestamps.load_timestamps(
+        cfg.path("dataset_dir") / "runB" / "cam0_20_yuv420p_output.hevc.timestamps.txt"
+    )
+    fused["runA_time_utc"] = [_iso_utc(int(ts_a[k])) for k in fused["runA_frame"]]
+    fused["runB_time_utc"] = [
+        _iso_utc(int(ts_b[j])) if j < ts_b.size else None for j in fused["runB_frame"]
+    ]
+
+    # H0 tail: timestamp lines beyond this run's decoded count have no video at all (CLAUDE.md
+    # §5) -- append them so outputs/mapping.csv covers every timestamp line, not just decoded
+    # frames, matching the "2695 runA rows" definition of done (CLAUDE.md §7). Only meaningful
+    # for a full (unlimited) run: under --limit, n_a is an artificial cap, not the true decoded
+    # count, so the "tail" would misclassify real video as no_video -- skipped in that case.
+    full_decoded_a = store_a0.n_frames
+    if n_a == full_decoded_a:
+        tail_k = np.arange(full_decoded_a, ts_a.size)
+        if tail_k.size:
+            tail = pd.DataFrame(
+                {
+                    "runA_frame": tail_k,
+                    "runB_frame": np.nan,
+                    "lo": np.nan,
+                    "hi": np.nan,
+                    "boundary_clamped": False,
+                    "confidence": np.nan,
+                    "status": "no_video",
+                    "reason": "no video for this row",
+                    "runA_time_utc": [_iso_utc(int(ts_a[k])) for k in tail_k],
+                    "runB_time_utc": None,
+                    "ridge_z": np.nan,
+                    "margin_z": np.nan,
+                    "cam_disagree": np.nan,
+                    "desc_disagree": np.nan,
+                    "sift_inliers": np.nan,
+                    "slope": np.nan,
+                    "runA_has_cam0": False,
+                    "runA_has_cam5": False,
+                    "runB_has_cam0": False,
+                    "runB_has_cam5": False,
+                    "method": "seqslam+dinov2",
+                }
+            )
+            fused = pd.concat([fused, tail], ignore_index=True)
+            print(f"appended {tail_k.size} no_video tail rows ({full_decoded_a}..{ts_a.size - 1})")
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    full_path = out_dir / "mapping_full.csv"
+    fused.to_csv(full_path, index=False)
+
+    final_cols = [
+        "runA_frame",
+        "runB_frame",
+        "confidence",
+        "lo",
+        "hi",
+        "status",
+        "reason",
+        "runA_time_utc",
+        "runB_time_utc",
+        "ridge_z",
+        "margin_z",
+        "cam_disagree",
+        "desc_disagree",
+        "sift_inliers",
+        "slope",
+        "runA_has_cam0",
+        "runA_has_cam5",
+        "runB_has_cam0",
+        "runB_has_cam5",
+        "method",
+    ]
+    final = fused[final_cols].rename(columns={"lo": "runB_frame_lo", "hi": "runB_frame_hi"})
+    # plan.md §7 / CLAUDE.md: "empty runB_frame" is the no-match rule's actual output contract --
+    # mapping_full.csv keeps the raw computed value (useful for debugging why a row was
+    # abstained), but the public mapping.csv must not report a runB_frame we've explicitly said
+    # we don't trust. ambiguous_range rows keep theirs -- "somewhere in this range" is still real
+    # information; only no_match/no_video rows are blanked.
+    unmatched = final["status"].isin(["no_match", "no_video"])
+    final.loc[unmatched, ["runB_frame", "runB_frame_lo", "runB_frame_hi", "runB_time_utc"]] = np.nan
+    final_path = out_dir / "mapping.csv"
+    final.to_csv(final_path, index=False)
+    print(f"wrote {full_path} and {final_path} ({len(fused)} rows)")
+
+    n_matched = int((fused["status"] == "matched").sum())
+    n_ambiguous = int((fused["status"] == "ambiguous_range").sum())
+    n_no_match = int((fused["status"] == "no_match").sum())
+    n_no_video = int((fused["status"] == "no_video").sum())
+    print(
+        f"status: matched={n_matched} ambiguous_range={n_ambiguous} "
+        f"no_match={n_no_match} no_video={n_no_video}"
+    )
+    return 0
+
+
+def _cmd_gt_sheets(cfg: Config) -> int:
+    """Build stratum S's model-blind labelling sheets (anchor references + coarse runB overview).
+
+    Only stratum S (22 anchors, a seeded deterministic sweep + fixed points of interest) is
+    built here -- 4 of stratum H's 8 anchors need the largest SeqSLAM/DINOv2 path disagreement
+    (plan.md §8), and DINOv2 has not been run in this environment yet (decisions.md D3). Fine
+    sheets are not built by this command either -- they need a per-anchor coarse pick from the
+    labeller's first pass over the coarse overview, which does not exist until that pass happens.
+
+    Args:
+        cfg: Loaded configuration.
+
+    Returns:
+        0 on success.
+    """
+    gt_cfg = cfg.raw["groundtruth"]
+    anchors = groundtruth.stratum_s_indices(seed=gt_cfg["stratum_s_seed"])
+
+    store_a0, store_a5 = _open_store(cfg, "runA", "cam0"), _open_store(cfg, "runA", "cam5")
+    store_b0, store_b5 = _open_store(cfg, "runB", "cam0"), _open_store(cfg, "runB", "cam5")
+
+    out_dir = cfg.path("gt_dir") / "sheets"
+    groundtruth.make_sheets(
+        store_a0,
+        store_a5,
+        store_b0,
+        store_b5,
+        anchors,
+        out_dir,
+        coarse_step=gt_cfg["sheets"]["coarse_step"],
+        fine_radius=gt_cfg["sheets"]["fine_radius"],
+    )
+    print(f"stratum S: {len(anchors)} anchors: {anchors.tolist()}")
+    print(f"wrote anchor references + coarse overview -> {out_dir}")
+    print(
+        "stratum H not built yet -- needs DINOv2 (decisions.md D3); "
+        "fine sheets need coarse picks from a first labelling pass"
+    )
+    return 0
+
+
 def _not_implemented(name: str) -> int:
     """Print a "not implemented" error for a subcommand that has no handler yet.
 
@@ -366,6 +808,14 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_decode(cfg)
     if args.command == "characterise":
         return _cmd_characterise(cfg)
+    if args.command == "describe":
+        return _cmd_describe(cfg, args.feat, args.limit, args.force)
+    if args.command == "align":
+        return _cmd_align(cfg, args.limit, args.force)
+    if args.command == "verify":
+        return _cmd_verify(cfg)
+    if args.command == "gt-sheets":
+        return _cmd_gt_sheets(cfg)
     return _not_implemented(args.command)
 
 

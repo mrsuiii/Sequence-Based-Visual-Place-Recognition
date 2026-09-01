@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+import json
+import logging
 from collections.abc import Callable
 from pathlib import Path
 
@@ -15,6 +17,8 @@ import torchvision.transforms as T
 from numpy.typing import NDArray
 
 from .frames import FrameStore
+
+log = logging.getLogger(__name__)
 
 
 def seqslam_descriptors(
@@ -135,18 +139,50 @@ def dino_descriptors(
 
 
 def cached(
-    fn: Callable[[], NDArray], key: str, cache_dir: str | Path, force: bool = False
+    fn: Callable[[], NDArray],
+    key: str,
+    cache_dir: str | Path,
+    extra: dict[str, object] | None = None,
+    force: bool = False,
 ) -> NDArray:
-    """Compute-or-load an array, writing a `.npy` plus a provenance `.json` sidecar (source
-    SHA-256 prefix, parameters, package versions -- CLAUDE.md §4).
+    """Compute-or-load an array, writing a `.npy` plus a provenance `.json` sidecar.
+
+    `cached` cannot see what `fn` (a zero-argument closure) depends on, so `key` must already
+    encode every parameter that changes the result, e.g. `"seqslam_runA_cam0_w64_h40_p8"` --
+    a stale key with unchanged parameters is not detected. `extra` is where the caller records
+    that same provenance (source file SHA-256 prefixes, the parameters `fn` was built with,
+    package versions) in machine-readable form for the sidecar (CLAUDE.md §4).
 
     Args:
         fn: Zero-argument callable that computes the array on a cache miss.
-        key: Cache key; determines the output filename.
+        key: Cache key; determines the output filename. Must already encode every parameter
+            that affects the result.
         cache_dir: Directory the `.npy`/`.json` pair is stored in.
+        extra (optional): Extra provenance fields to record in the sidecar. Defaults to `None`
+            (no extra fields).
         force (optional): Recompute even if a cache entry exists. Defaults to `False`.
 
     Returns:
         The array, either loaded from cache or freshly computed.
     """
-    raise NotImplementedError("cached: implement in Step 3 (plan.md §5)")
+    cache_dir = Path(cache_dir)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    npy_path = cache_dir / f"{key}.npy"
+    json_path = cache_dir / f"{key}.json"
+
+    if not force and npy_path.exists():
+        log.info("cache hit: %s", npy_path)
+        return np.load(npy_path)
+
+    log.info("cache miss: %s (computing)", npy_path)
+    arr = fn()
+    np.save(npy_path, arr)
+    sidecar = {
+        "key": key,
+        "shape": list(arr.shape),
+        "dtype": str(arr.dtype),
+        "numpy_version": np.__version__,
+        **(extra or {}),
+    }
+    json_path.write_text(json.dumps(sidecar, indent=2, default=str))
+    return arr
