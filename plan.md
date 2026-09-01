@@ -10,6 +10,17 @@ pass afterward, not a claimed-independent second labeller (§0.2, §8, §13) —
 independent judges. A dedicated rehearse/defensibility slot added to day 2 (§12) — being able to explain what
 shipped matters more than shipping more.
 
+**Revision (2026-08-31, deadline correction):** "48 hours" was misread as the total work budget throughout §12's
+schedule — it is actually the window for *downloading the dataset from the provided link*, not a work deadline.
+The real submission deadline is **2026-09-03**, i.e. ~3 more days from today (2026-08-31), not the ~19 hours
+(2 × 9.5 h) §12 was compressed into. §12's hour-by-hour schedule below is kept as a record of the original
+(mistaken) tight-budget plan, not as the live plan — do not keep cutting scope to fit it. Concretely, this means:
+DINOv2 (`describe --feat dinov2`) is no longer blocked by a network restriction (re-verified 2026-08-31 — the
+sandbox's earlier block on `codeload.github.com` is gone) and there is enough real time to run it properly, not
+just note it as deferred; SIFT verification and v2 NULL-state DP no longer need to stay "cut by default" purely
+for time reasons — whether to build them is now a genuine scope call, not a forced cut. **Next action: ask the
+user which previously-cut/deferred items they want back in scope given the extra ~3 days, rather than assuming.**
+
 ## 0. The brief, the weights, the decisions
 
 ### 0.1 Brief (as received)
@@ -172,9 +183,22 @@ them; flagged rather than silently overwritten.
       their median for ≥ 10 frames. Implemented and validated: runA measures a stationary run of `(0, 173)`,
       matching the prior session's claim exactly (findings.md). [~] Static-mask sanity figure (per-pixel
       temporal std) — not done yet.
-- [ ] Sync test (records evidence for H0): stop/onset event indices per camera; cam0-only vs cam5-only alignment
+- [x] Sync test (records evidence for H0): stop/onset event indices per camera; cam0-only vs cam5-only alignment
       paths (§6) must agree — this bounds the *differential* cam0/cam5 offset (a common offset would cancel; say so).
-      Deferred — needs Step 4's alignment paths to exist first.
+      Done differently than planned but with stronger evidence: prompted by a user question ("is 'both timestamp
+      files have 2663 lines' the justification for pairing cam0[k]/cam5[k]?" — answer: no, that's the same
+      byte-identical file read twice, trivial by construction, not independent evidence). Real justification found
+      via `io_video.scan_nals`'s GOP/IDR structure: all 4 streams (both runs × both cams) have identical IDR
+      positions and GOP sizes through the last full GOP (index ≤2499) — the signature of a clean tail truncation,
+      not scattered interior frame drops, so H0 holds structurally for that whole range. runA: cam0/cam5 cut off
+      at the *exact same point* in the final GOP (174/250 both) — H0 supported for the full sequence. runB: cam0/
+      cam5 diverge only in the final incomplete GOP (122 vs 115 pictures — the difference, 7, is exactly the
+      already-known cam5-is-7-frames-shorter gap, now explained: same stop event, slightly different
+      buffered/flushed frame count per encoder). Two content-based spot checks (motion_energy transition timing;
+      a specific landmark's visibility) also run this session, both resolved to plausible confounds (passing
+      traffic, turning-angle/viewing-geometry) rather than evidence against synchronisation — findings.md has the
+      full trace. H0 remains labelled an assumption (no direct hardware timestamp comparison is possible from
+      this dataset) but is no longer "declared, not measured" — it now has real structural + content evidence.
 
 ## 5. Step 3 — Representation (1:30)
 
@@ -209,8 +233,12 @@ Constraint: both runs traverse the route in the same order ⇒ the mapping is a 
 free local slope (stops = horizontal/vertical runs), open ends (runB starts earlier, runA ends later), and possible
 gaps (no correspondence). Loop closure (start ≈ end) is exactly what a single-frame argmax cannot resolve.
 
-- [ ] v1 DTW with open ends — cost `c = 3 − clip(Ŝ_joint, −3, 3)` ∈ [0, 6] plus `lam` per non-diagonal step
-      (`lam` ∈ {0.1, 0.25, 0.5, 1.0}, default 0.5); exact row-vectorised recurrence, float64, < 1 s for 2674×2622:
+- [x] v1 DTW with open ends — cost `c = 3 − clip(Ŝ_joint, −3, 3)` ∈ [0, 6] plus `lam` per non-diagonal step
+      (`lam` ∈ {0.1, 0.25, 0.5, 1.0}, default 0.5); exact row-vectorised recurrence, float64, < 1 s for 2674×2622.
+      Implemented (`align.py`: `_dtw_forward`/`_dtw_backtrack`/`dtw_open_ends`), 21/21 tests green
+      (`tests/test_align.py`: exactness vs. naive reference, structural checks, known-answer plateau), run for
+      real on the full runA×runB cam0 matrix — 0.06 s, path fully covers runA, visibly fixes the corner-aliasing
+      seen in the Step 3 diagnostic (findings.md).
 
 ```python
 def dtw_open_ends(c: NDArray, lam: float) -> NDArray:
@@ -234,15 +262,25 @@ def dtw_open_ends(c: NDArray, lam: float) -> NDArray:
     return np.array(path[::-1], np.int32)
 ```
 
-- [ ] `path_to_mapping`: per runA row, `runB_frame = argmax Ŝ_joint` over the visited columns `[lo, hi]`; widen
+- [x] `path_to_mapping`: per runA row, `runB_frame = argmax Ŝ_joint` over the visited columns `[lo, hi]`; widen
       `[lo, hi]` to the runB stationary segment containing `runB_frame` (all those frames show the same place);
-      flag `boundary_clamped` for runs stuck at column 0 or NB−1 (the runA tail beyond runB's end).
+      flag `boundary_clamped` for runs stuck at column 0 or NB−1 (the runA tail beyond runB's end). Implemented
+      (`align.py`), 3 new tests green (`tests/test_align.py`, 24/24 total), run for real on the full cam0 SeqSLAM
+      DTW path: rows 0–5 correctly widen to `[0, 173]` (the runA/runB stationary segment), tail rows land on real
+      matches (no `boundary_clamped` rows at all — runA and runB happen to be similar length here; findings.md).
 - [ ] v2 (**cut by default** — build only in the day-2 buffer, and only if v1 is shipped, tested, and understood;
       do not start this while v1 is still unverified) NULL-state affine-gap DP: score `m = Ŝ_joint − s0` (s0 = 1.0),
       states M (match), X (runA frame unmatched), Y (runB frame skipped), penalties `g_open 3.0`, `g_ext 0.5`,
       `rho 0.5` for non-diagonal match steps; row-vectorised with `cumsum`/`maximum.accumulate` like v1; must
       reproduce v1 on gap-free synthetic warps and pass the deletion test (§8) before it ships. Rows in state X get
       an empty `runB_frame` from the optimiser instead of from post-hoc thresholds.
+- [x] `local_slope`: least-squares slope of `j` vs. `i` over a `window`-point sliding window centred on each path
+      point (clipped at open start/end), `inf` when `i` never changes in the window (horizontal run wider than
+      `window`). Implemented (`align.py`), 3 new tests green (`tests/test_align.py`, 27/27 total: constant-1.0
+      diagonal, known constant-rate-2.0 recovery, `inf` on a flat-`i` window). Run for real on the full cam0 path
+      at `window=21`: median slope 1.0 away from stops, range `[0, 4]`, no `inf` (no horizontal run that wide in
+      this data); near-zero over the shared runA/runB stationary segment as expected -- both runs idle together,
+      so `i` still advances one row per runA frame but `j` barely moves (findings.md).
 - Not chosen: fixed/linear offset (violates the brief), nearest neighbour only (loop closure + uniform stretches
   alias), HMM with hand-tuned transition matrix (equivalent to v2 with more knobs), full SLAM (no time, no need).
 
@@ -260,47 +298,127 @@ Independent evidence per runA row (all become columns of `outputs/mapping_full.c
 | `sift_inliers` | RootSIFT (ratio 0.8) + `cv2.USAC_MAGSAC` fundamental matrix on 640×384 gray, assigned pair ±2 | geometric consistency independent of global descriptors |
 | `slope`, `stationary_A/B`, `boundary_clamped`, `ambiguity = hi − lo` | context flags | plateaus and tails are where errors live |
 
+- [x] `ridge_strength`: mean similarity along the path's own diagonal trajectory (each neighbouring
+      row's *own* path column via a shared `_path_to_row_j` helper, not a column held fixed —
+      the path is diagonal, not vertical), over a `window`-row neighbourhood. Implemented
+      (`verify.py`), 3 tests green. User's first draft held the column fixed and varied only the
+      row, which checks a different thing (does this one runB frame also match nearby runA rows)
+      and had a separate output-length bug (`len(path)` instead of `NA`) — both caught in review
+      before running; fixed version verified on real cam0 data: median 1.0 at the ceiling isn't
+      typical, weaker (~1.87) over the shared stationary segment, saturates at 3.0 mid-route
+      (findings.md).
+- [x] `margin`: claimed-match similarity minus the best similarity strictly outside a `±band`
+      column window, fully vectorised (`NA x NB` boolean mask, no loop). Implemented (`verify.py`),
+      4 tests green. Run for real (`band=30`): correct, but surfaced that 99.5 % of rows have a
+      low/negative raw margin, root-caused to `local_contrast_norm`'s per-row local z-scoring
+      amplifying low-texture stretches into spurious near-ceiling "attractor" columns (same
+      phenomenon as Step 3's attractor columns, confirmed recurring elsewhere in the matrix, not a
+      `margin` bug) — this is exactly why `fuse_confidence` combines multiple independent cues
+      rather than trusting `margin` alone; full trace in findings.md.
 - [ ] SIFT calibration — **cut by default**, not part of the core day-1/day-2 path. Add only in the day-2 buffer
       (§12) if genuinely ahead: inlier distribution for correct anchors vs pairs offset by 60–200 frames; "verified"
       threshold = value at which offset pairs pass ≤ 5 %. Under rain many correct pairs will fail ⇒ use only as
       positive evidence; if it does not separate, drop it and say so in the report. `cam_disagree`, `desc_disagree`
       and `argmax_disagree` already give multi-signal verification without it — SIFT is upside, not a dependency.
-- [ ] No-match rule (empty `runB_frame`): no video for the row; `ridge_z < tau` (tau from the deletion test,
+- [x] `path_disagreement` (feeds `cam_disagree`/`desc_disagree`): reduces each path to one
+      last-visited runB column per runA row, then takes `|j_a - j_b|`. Implemented (`verify.py`),
+      3 tests green (`tests/test_verify.py`): identical paths → 0, a path with a horizontal step
+      compared against a known target, and a `ValueError` when the two paths cover a different
+      number of runA rows.
+- [x] No-match rule (empty `runB_frame`): no video for the row; `ridge_z < tau` (tau from the deletion test,
       default 0.75); `boundary_clamped ∧ ridge_z < 1.5`; `cam_disagree > 30 ∧ desc_disagree > 30`; or DP gap (v2).
-- [ ] Confidence tiers (ordinal; meaning = the reliability table on held-out anchors, *not* a calibrated
+- [x] Confidence tiers (ordinal; meaning = the reliability table on held-out anchors, *not* a calibrated
       probability): 0.9 if `ridge_z ≥ 1.5` and both disagreements ≤ 3 · 0.7 if `ridge_z ≥ 1.0` and two of
       {cam ≤ 5, desc ≤ 5, SIFT verified} · 0.5 for `ambiguous_range` rows inside plateaus · 0.4 otherwise (matched
-      but weak). Thresholds tuned on synthetic warps + deletion test + the 6 dev anchors only.
-- [ ] `outputs/mapping.csv` columns: `runA_frame, runB_frame, confidence, runB_frame_lo, runB_frame_hi,
+      but weak). Thresholds tuned on synthetic warps + deletion test + the 6 dev anchors only. Implemented as
+      `fuse_confidence` (`confidence.py`) with all six thresholds as named, documented parameters (not hardcoded)
+      so they can be re-tuned from `config.yaml` without touching the function body; since SIFT is cut by default,
+      the tier-0.7 "2 of {cam, desc, SIFT}" vote degrades to "both of {cam, desc}" when `sift_inliers` is absent
+      from the cues frame, verified by a dedicated test. 8 tests green (`tests/test_confidence.py`): missing-column
+      validation, each tier, the SIFT-recovers-a-vote case, each no-match trigger independently, and no-match
+      overriding an otherwise-top-tier row.
+- [x] `outputs/mapping.csv` columns: `runA_frame, runB_frame, confidence, runB_frame_lo, runB_frame_hi,
       status{matched, ambiguous_range, no_match, no_video}, reason, runA_time_utc, runB_time_utc, ridge_z,
       margin_z, cam_disagree, desc_disagree, sift_inliers, slope, runA_has_cam0, runA_has_cam5, runB_has_cam0,
       runB_has_cam5, method`. Schema documented in `outputs/SCHEMA.md` and enforced by `tests/test_mapping_csv.py`.
+      Wired up via new `describe`/`align`/`verify` CLI subcommands (`cli.py`) + `descriptors.cached`
+      (was a stub) + a `reason` column added to `fuse_confidence`. Run for real, full scale, no `--limit`:
+      2695 rows (exactly CLAUDE.md §7's "definition of done" count), all 6 schema properties verified
+      directly against the generated file (every runA frame once, confidence in [0,1] or empty, empty
+      `runB_frame` iff unmatched, monotone over matched/ambiguous rows, status within the documented set,
+      `lo <= runB_frame <= hi`), plus a cross-check that `no_video` count (21) exactly matches the
+      independently-measured timestamp/decode-count discrepancy from Step 0/1 — not just "some positive
+      number". `status: matched=2445 ambiguous_range=123 no_match=106 no_video=21`. SeqSLAM-only for now
+      (DINOv2 deferred — decisions.md D3); every row is therefore capped at confidence 0.4/0.5, never
+      0.7/0.9, until `desc_disagree` is populated. 7 new tests green (`tests/test_mapping_csv.py`, run
+      against the real generated file, not skipped). `tests/test_descriptors.py` (7 tests) covers the
+      new `cached()`. 63/63 project tests green, `make lint` clean.
 
 ## 8. Step 6 — Ground truth & evaluation (user labels 1.5 h blind; Claude QA pass ~0:30 after, not in parallel; analysis 1:30)
 
-- [ ] `gt/labelling_protocol.md`: "same place" = within ±0.5 s of runB travel (±5 frames at 10 Hz); lane offset
+- [x] `gt/labelling_protocol.md`: "same place" = within ±0.5 s of runB travel (±5 frames at 10 Hz); lane offset
       ignored. The sheet tool reads only the frame cache — it never sees model output (blind by construction):
       coarse sheet = every 20th runB frame for both cameras (131 tiles, indices burnt in) → fine sheet = every frame
       in ±20 of the coarse pick (41 tiles). Record `runA_frame, runB_best, lo, hi, quality{sure, unsure, no_match},
       note`. Scanning sequentially from the previous anchor's runB position is allowed (route order is a property
-      of the data, not of the model).
-- [ ] Anchors (30, labelled by the user; Claude QA pass after — see §0.2): stratum S (22): runA 200 … 2500 every
+      of the data, not of the model). Written; `groundtruth.make_sheets` implemented (signature widened to take
+      all 4 frame stores, not just `store_b` — decisions.md D6), 10 tests green (`tests/test_groundtruth.py`), run
+      for real via the new `gt-sheets` CLI subcommand: 22 anchor reference tiles + 132 coarse overview tiles
+      written to `gt/sheets/`, visually confirmed legible (findings.md).
+- [x] Anchors (30, labelled by the user; Claude QA pass after — see §0.2): stratum S (22): runA 200 … 2500 every
       ~110 frames with ±20 jitter (fixed seed) + plateau frames 60, 150 + tail frames 2600, 2650. Stratum H
       (8, reported separately): 2 in the low-texture block, 2 with passing traffic on cam5, 4 at the largest
-      SeqSLAM/DINOv2 path disagreement (positions model-informed, labels still blind).
-- [ ] Merge: the user's label is the consensus (authoritative). Claude's QA pass flags rows where its read differs
+      SeqSLAM/DINOv2 path disagreement (positions model-informed, labels still blind). Stratum S implemented as
+      `groundtruth.stratum_s_indices` (seeded, deterministic; spacing is ~135 frames not exactly "~110" to hit the
+      committed total of 22 — decisions.md D7), run for real: `[60, 150, 183, 346, 476, 602, 738, 891, 994, 1155,
+      1270, 1400, 1553, 1708, 1833, 1969, 2103, 2241, 2365, 2485, 2600, 2650]`. Stratum H **not built yet** — 4 of
+      its 8 anchors need DINOv2 path disagreement, unavailable in this environment (decisions.md D3); only stratum
+      S is ready for labelling right now.
+- [x] Merge: the user's label is the consensus (authoritative). Claude's QA pass flags rows where its read differs
       by more than `max(3, half the union width)` for the user to re-check by hand; only the user's post-recheck
       label ships. Report user-vs-Claude agreement as a **QA sanity number**, explicitly not inter-rater
       reliability or a label-noise floor — they are not independent judges (§13). A true noise floor would need a
       second independent human on a subset; optional, not required — note its absence in the report if skipped.
+      **Landed differently than originally planned, but resolved**: Claude produced a first-pass draft (inverting
+      the user-primary/Claude-QA split this bullet assumed — decisions.md D8), then the user did a real,
+      frame-by-frame independent verification pass over all 22 anchors (not a skim — ranges tightened, one
+      `no_match` corrected to a real find, two guesses corrected to genuine `no_match`), which decisions.md D8's
+      2026-09-01 update accepts as satisfying the "real re-derivation" bar. Only one labeller file exists in the
+      end (`gt/anchors_user.csv`), so there is no second-labeller agreement number to report — noted as absent
+      per this bullet's own fallback clause, not silently skipped. `load_labels` still reads
+      `anchors_claude.csv` too if one is ever added.
 - [ ] Split: 6 dev anchors (threshold sanity only), ~24 test anchors reported with Wilson 95 % CIs
-      (e.g. 22/24 → [74 %, 98 %]).
-- [ ] Metrics: error = 0 if the prediction lies in `[lo, hi]`, else distance to the nearest end; hit@2/5/10 frames
+      (e.g. 22/24 → [74 %, 98 %]). Not yet applied — `evaluate` scores all 22 stratum-S anchors together for now;
+      the dev/test split is a follow-up once labels are final (only matters once thresholds need calibrating).
+- [x] Metrics: error = 0 if the prediction lies in `[lo, hi]`, else distance to the nearest end; hit@2/5/10 frames
       (and seconds via timestamps); median and p90 error; per stratum (plateau / mid-route / tail); per confidence
       tier (reliability table); no-match precision/recall from the **deletion test** (delete runB [j0, j0+150),
-      rerun, the mapping must abstain on the corresponding runA rows) plus the labelled runA tail.
-- [ ] Ablation on the same anchors: argmax-only vs DTW; cam0 / cam5 / both; SeqSLAM / DINOv2 / both;
-      with / without local contrast normalisation.
+      rerun, the mapping must abstain on the corresponding runA rows) plus the labelled runA tail. Implemented as
+      `groundtruth.evaluate` + `groundtruth.deletion_test` (frames-only for now, seconds-via-timestamps not yet
+      added; per-stratum breakdown not yet split out, only per-confidence-tier). 12 tests green
+      (`tests/test_groundtruth.py`), including a real bug caught running on real data (a malformed anchor row with
+      `quality != "no_match"` but empty `lo`/`hi` silently turned `median_error`/`p90_error` NaN for *every*
+      anchor via `np.median`'s NaN-propagation — fixed, regression-tested; findings.md). Real `deletion_test` run
+      on cached data: recall 1.0, precision 0.56 (safe but somewhat conservative near a deletion boundary — not
+      cherry-picked, both numbers reported). **Final `evaluate` run (2026-09-01) against the user-verified anchors**
+      (decisions.md D8 update): 19/22 scored, `median_error=0.0` frames, `p90_error=4.2` frames, `hit@2/5/10=89.5%`,
+      Wilson 95% CI on hit@5 `[68.6%, 97.1%]`. **Reliability table is monotonic**: tier 0.4 → 50% (n=4), 0.7 → 71%
+      (n=7), 0.9 → 100% (n=8) — the earlier (unverified-label) run's inverted pattern is now resolved in the
+      expected direction, confirming that inversion was correctly attributed to label noise, not a real
+      calibration problem (findings.md). Per-stratum breakdown and seconds-via-timestamps still not added.
+- [x] Ablation on the same anchors: argmax-only vs DTW; cam0 / cam5 / both; SeqSLAM / DINOv2 / both;
+      with / without local contrast normalisation. Run against the final verified anchors (findings.md, full
+      table): argmax-only p90=556.3 vs DTW p90=3.5 (the corner-aliasing diagnostic's quantitative proof); cam5-only
+      measurably worse than cam0-only (median 2.0 vs 0.0, p90 7.9 vs 3.7 — quantifies the cam5-traffic issue found
+      qualitatively earlier); joint (shipped) p90=3.5, best/tied-best of every configuration. **Plus an extra axis
+      not originally planned**: early vs. late camera fusion, proposed and requested by the user as a real test of
+      the D-series early/late-fusion discussion — SeqSLAM benefits hugely from early fusion (p90 79.2→3.7, traced
+      to anchors 60/150/183 all being pulled to a known false attractor by late-fusion's score averaging), DINOv2
+      barely changes (4.3→4.1) — but the shipped late-fusion design matches or beats early-fusion's best result
+      (3.5 vs 3.7) via a different mechanism (descriptor redundancy, not camera-representation redundancy) while
+      keeping `cam_disagree`/`desc_disagree` computable, which full early fusion would preclude. With/without
+      local contrast normalisation covered in substance by D9/D10 (DINOv2 collapses without a wide-enough window)
+      rather than re-run as a separate raw-cosine row.
 - [ ] Failure taxonomy with side-by-side figures: start plateau (many-to-one onto moving runB), runA tail beyond
       runB's truncated end, low-texture block, cam5 passing traffic, rain-degraded stretch, loop-closure corners.
 
@@ -368,7 +486,11 @@ work, the deep descriptor buys robustness on cam5 and the rain-degraded stretche
 `desc_disagree` / `argmax_disagree` give multi-signal verification on their own. Abstention and the reliability
 table are what make the result defensible, not the extra verifiers.
 
-## 12. Two-day schedule (≈ 9.5 h per day) and cut order
+## 12. Two-day schedule (≈ 9.5 h per day) and cut order — SUPERSEDED, see the 2026-08-31 revision note above
+
+Kept for the record of the original (mistaken-deadline) plan; the real deadline is 2026-09-03, ~3 days out, not
+the ~19 h this section assumes. Not being re-paced hour-by-hour — treat the remaining Step 6-8 items as a normal
+task list with real slack, not a countdown.
 
 Day 1
 - 08:30 skeleton, config, Makefile, `io_video`, `timestamps`, `make verify-data`; JPEG decode in the background.

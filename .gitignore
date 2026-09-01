@@ -2,6 +2,10 @@
 data/cache/
 outputs/*.npy
 
+# generated labelling tiles — regenerate via `make gt-sheets` (deterministic, seeded);
+# gt/ itself keeps labelling_protocol.md + the anchor CSVs, which are tracked
+gt/sheets/
+
 # LaTeX build artifacts (report.tex is tracked; these are not)
 report/*.aux
 report/*.log
@@ -24,3 +28,6 @@ dataset/runB/
 
 # OS
 .DS_Store
+
+# personal notes, not part of the deliverable
+notes/
