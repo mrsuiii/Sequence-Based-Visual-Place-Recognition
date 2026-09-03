@@ -1,4 +1,4 @@
-"""Similarity matrices between two runs' descriptor sets. Step 3 (plan.md §5)."""
+"""Similarity matrices between two runs' descriptor sets."""
 
 from __future__ import annotations
 
@@ -43,8 +43,9 @@ def local_contrast_norm(similarity: NDArray[np.float64], window: int) -> NDArray
 
     Args:
         similarity: float64[NA, NB] similarity matrix, e.g. from `cosine`.
-        window: Width in columns of the local window, e.g. one of plan.md §5's candidates
-            `{20, 50, 100}` (final value tuned on synthetic warps, not by this function).
+        window: Width in columns of the local window, e.g. config.yaml
+            `similarity.contrast_window_seqslam`/`contrast_window_dinov2` (tuned empirically,
+            not by this function).
 
     Returns:
         float64[NA, NB] z-scored similarity matrix, clipped to [-3, 3].

@@ -1,0 +1,28 @@
+{
+  "n_scored": 20,
+  "n_total_anchors": 22,
+  "median_error": 0.0,
+  "p90_error": 3.5000000000000213,
+  "hit_at_2": 0.9,
+  "hit_at_5": 0.9,
+  "hit_at_10": 0.9,
+  "hit_at_5_wilson_ci": [
+    0.6989617935882066,
+    0.9721341060158468
+  ],
+  "abstain_true_positive": 1,
+  "abstain_false_negative": 1,
+  "abstain_false_positive": 0,
+  "by_confidence_tier": {
+    "0.7": {
+      "n": 2,
+      "n_correct": 0,
+      "accuracy": 0.0
+    },
+    "0.9": {
+      "n": 18,
+      "n_correct": 16,
+      "accuracy": 0.8888888888888888
+    }
+  }
+}

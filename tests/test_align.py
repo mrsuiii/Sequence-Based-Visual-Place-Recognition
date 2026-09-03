@@ -47,7 +47,7 @@ def _dtw_naive(cost: np.ndarray, lam: float) -> tuple[np.ndarray, np.ndarray]:
 @pytest.mark.parametrize("lam", [0.1, 0.5, 1.0])
 def test_dtw_matches_naive_reference(n_a: int, n_b: int, lam: float) -> None:
     """The vectorised D matrix and backtracked path must exactly match the naive reference, on
-    random cost matrices covering both aspect ratios and every candidate `lam` from plan.md §6."""
+    random cost matrices covering both aspect ratios and every candidate `lam` (0.1, 0.5, 1.0)."""
     rng = np.random.default_rng(seed=n_a * 1000 + n_b)
     cost = rng.uniform(0.0, 6.0, size=(n_a, n_b))
 
@@ -81,8 +81,8 @@ def test_dtw_recovers_a_known_diagonal_with_a_plateau() -> None:
     'plateau', modelling a stop), after which the diagonal *resumes from the plateau's exit
     column* rather than jumping back to `i == j` -- jumping back would need an expensive multi-
     column catch-up that is not actually the cheapest path, which is exactly the mistake an
-    earlier version of this test made (see decisions.md / git history: the naive-reference test
-    above passed while this one failed, correctly pointing at the test, not `dtw_open_ends`)."""
+    earlier version of this test made (see git history: the naive-reference test above passed
+    while this one failed, correctly pointing at the test, not `dtw_open_ends`)."""
     n_a, n_b = 30, 30
     cost = np.full((n_a, n_b), 6.0)  # 6.0 = worst possible cost (clip(-3,3) -> cost=6)
     expected_j = np.arange(n_a)

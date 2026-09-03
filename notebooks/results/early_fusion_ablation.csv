@@ -1,0 +1,10 @@
+configuration,n,median_error,p90_error,hit_at_5,pred_2600,pred_2650
+SeqSLAM early-fusion (concat),20,0.0,3.700000000000024,0.9,2598,2600
+DINOv2 early-fusion (concat),20,0.0,4.100000000000016,0.9,2604,2614
+Full joint early-fusion,20,0.0,3.5000000000000213,0.9,2597,2600
+SeqSLAM late-fusion (current),20,0.0,79.2,0.85,2597,2600
+DINOv2 late-fusion (current),20,0.0,4.300000000000033,0.9,2606,2614
+"cam0-only (both desc, late-fused)",20,0.0,3.700000000000024,0.9,2600,2600
+"cam5-only (both desc, late-fused)",20,2.0,7.900000000000027,0.85,2585,2587
+Joint late-fusion -- SHIPPED,20,0.0,3.5000000000000213,0.9,2597,2600
+argmax-only on S_joint (no DTW),20,0.0,556.3000000000001,0.65,655,655

@@ -1,7 +1,7 @@
-"""Independent agreement cues used as confidence evidence. Step 5 (plan.md §7).
+"""Independent agreement cues used as confidence evidence.
 
-`sift_verify` is cut by default (see plan.md's revision note and config.yaml
-`verify.sift.enabled`) -- the other three cues do not depend on it.
+`sift_verify` was scoped in but not built (config.yaml `verify.sift.enabled`) -- the other three
+cues do not depend on it.
 """
 
 from __future__ import annotations
@@ -139,8 +139,8 @@ def path_disagreement(path_a: NDArray[np.int32], path_b: NDArray[np.int32]) -> N
 def sift_verify(store_a: FrameStore, store_b: FrameStore, i: int, j: int, ratio: float) -> int:
     """Count RootSIFT inlier matches (RANSAC/MAGSAC) between one claimed-matching frame pair.
 
-    Cut by default (plan.md §7 revision note) -- build only in the day-2 buffer if genuinely
-    ahead of schedule.
+    Scoped in but not built -- the shipped agreement cues (ridge_z, margin_z, cam/desc
+    disagreement) already meet the accuracy bar without a geometric verification pass.
 
     Args:
         store_a: Frame source for runA.
@@ -152,4 +152,4 @@ def sift_verify(store_a: FrameStore, store_b: FrameStore, i: int, j: int, ratio:
     Returns:
         Number of geometrically-verified inlier matches.
     """
-    raise NotImplementedError("sift_verify: cut by default (plan.md §7); day-2 buffer only")
+    raise NotImplementedError("sift_verify: scoped in but not built -- see the module docstring")

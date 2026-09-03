@@ -1,5 +1,5 @@
-"""Per-frame descriptors: SeqSLAM-style thumbnails (R1) and DINOv2 embeddings (R2). Step 3
-(plan.md §5). R2 is a committed part of the default pipeline, fused with R1, not an optional extra.
+"""Per-frame descriptors: SeqSLAM-style thumbnails (R1) and DINOv2 embeddings (R2). R2 is a
+committed part of the default pipeline, fused with R1, not an optional extra.
 """
 
 from __future__ import annotations
@@ -104,8 +104,7 @@ def dino_descriptors(
             automatically when it is not. Defaults to `"mps"`.
         batch_size (optional): Frames per forward pass, e.g. config.yaml
             `descriptors.dinov2.batch_size`. Defaults to `32`.
-        gem_p (optional): GeM pooling power over the patch tokens (plan.md §5 fixes this at 3).
-            Defaults to `3.0`.
+        gem_p (optional): GeM pooling power over the patch tokens. Defaults to `3.0`.
 
     Returns:
         float32[N, 768] L2-normalised descriptors: `L2(concat(L2(CLS), L2(GeM(patch tokens))))`.

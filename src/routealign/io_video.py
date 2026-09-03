@@ -1,7 +1,9 @@
 """ffprobe/ffmpeg subprocess wrappers. The only place video files are touched.
 
-Video I/O goes through the ffmpeg/ffprobe CLI via subprocess only, never PyAV (see decisions.md
-D0) and never `-hwaccel videotoolbox` (fails on these raw HEVC streams; CLAUDE.md §5).
+Video I/O goes through the ffmpeg/ffprobe CLI via subprocess only, never PyAV (PyAV alongside
+opencv-python bundles a second, differently-versioned copy of the ffmpeg shared libs, producing a
+macOS ObjC `libavdevice` class-duplication conflict) and never `-hwaccel videotoolbox` (fails on
+these raw HEVC streams; CLAUDE.md §5).
 """
 
 from __future__ import annotations
@@ -45,8 +47,9 @@ class StreamProbe:
         pix_fmt: Pixel format, e.g. `"yuv420p"`.
         r_frame_rate: ffprobe's `r_frame_rate` field, as `"num/den"`.
         avg_frame_rate: ffprobe's `avg_frame_rate` field, as `"num/den"`. For a headerless
-            elementary stream this is a content-independent fallback, not a real average
-            (see findings.md) -- never use it as the declared frame rate.
+            elementary stream this is a content-independent fallback, not a real average --
+            proven by encoding a synthetic clip at a known true 17 fps and observing it still
+            reports `avg_frame_rate=25/1` -- never use it as the declared frame rate.
     """
 
     width: int
@@ -183,7 +186,8 @@ def decode_to_jpegs(
 @dataclass(frozen=True)
 class NalStats:
     """Picture/GOP structure from `ffprobe -show_frames` -- a picture-level scan (key_frame,
-    pict_type per frame), not a byte-level Annex-B NAL parse (decisions.md D0).
+    pict_type per frame), not a byte-level Annex-B NAL parse (ffprobe's own frame-level decode
+    already gives GOP/IDR positions directly, so a manual bitstream walk would be redundant).
 
     Attributes:
         n_pictures: Total decoded picture count -- an independent cross-check of `count_decoded`.
@@ -192,8 +196,10 @@ class NalStats:
         gop_sizes: Frame count between consecutive IDR pictures.
         pict_type_counts: Count of each picture type, e.g. `{"I": 11, "P": 674, "B": 1989}`.
         file_size_bytes: Size of the video file in bytes.
-        file_size_mod_262144: `file_size_bytes % 262144` -- see findings.md for why this is
-            checked (weak, circumstantial evidence about a truncated final frame).
+        file_size_mod_262144: `file_size_bytes % 262144` -- checked because every file in this
+            dataset is an exact multiple of 256 KiB, weak circumstantial evidence of a writer
+            that stopped mid-buffer without a final flush, consistent with (not proof of) the
+            frame-count discrepancy between timestamp lines and decoded frames.
     """
 
     n_pictures: int
@@ -302,8 +308,9 @@ _TRACE_FIELD_RE = re.compile(r"^\[trace_headers[^\]]*\]\s+\d+\s+(\S+)\s+[01]+\s+
 def sps_vui(path: str | Path) -> SpsVui:
     """Parse a video's first SPS/VUI via `ffmpeg -bsf:v trace_headers`.
 
-    Uses ffmpeg's own HEVC bitstream parser rather than a hand-rolled Exp-Golomb/RBSP parser
-    (decisions.md D0). Requires `-c:v copy`, since `trace_headers` reads the coded bitstream and
+    Uses ffmpeg's own HEVC bitstream parser rather than a hand-rolled Exp-Golomb/RBSP parser --
+    correctness of a bit-level parser is hard to self-verify, whereas ffmpeg's is already
+    battle-tested. Requires `-c:v copy`, since `trace_headers` reads the coded bitstream and
     errors if the stream is decoded first.
 
     Args:

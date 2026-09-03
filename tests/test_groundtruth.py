@@ -252,7 +252,7 @@ def test_make_sheets_fine_sheet_clips_at_the_start_of_runb(tmp_path) -> None:
 
 
 def test_load_labels_reads_user_only_when_claude_file_is_absent(tmp_path) -> None:
-    """As of this session, only `anchors_user.csv` exists (decisions.md D8) -- must not require
+    """Only `anchors_user.csv` exists so far -- `load_labels` must not require
     `anchors_claude.csv` to also be present."""
     pd.DataFrame({"runA_frame": [1, 2], "runB_best": [10, 20]}).to_csv(
         tmp_path / "anchors_user.csv", index=False
@@ -284,7 +284,11 @@ def test_load_labels_raises_if_neither_file_exists(tmp_path) -> None:
 
 
 def _anchors(rows: list[dict]) -> pd.DataFrame:
-    return pd.DataFrame(rows)
+    """Build a synthetic anchors DataFrame, filling in `runB_best`/`note` (real
+    `gt/anchors_user.csv` columns `evaluate`'s `per_anchor` now carries through) with harmless
+    defaults where a test case doesn't care about them."""
+    defaults = {"runB_best": None, "note": ""}
+    return pd.DataFrame([{**defaults, **row} for row in rows])
 
 
 def _mapping(rows: list[dict]) -> pd.DataFrame:
@@ -310,6 +314,24 @@ def test_evaluate_perfect_predictions_score_zero_error() -> None:
     assert result["median_error"] == 0.0
     assert result["hit_at_2"] == 1.0
     assert result["n_scored"] == 2
+    assert result["per_anchor"]["correct"].all()
+    # column names are prefixed so prediction vs ground truth can never be confused when this
+    # is read back from a saved CSV
+    assert list(result["per_anchor"].columns) == [
+        "runA_frame",
+        "pipeline_runB_frame",
+        "gt_runB_best",
+        "gt_lo",
+        "gt_hi",
+        "correct",
+        "error_frames",
+        "abstain_outcome",
+        "pipeline_confidence",
+        "pipeline_status",
+        "gt_quality",
+        "gt_note",
+    ]
+    assert (result["per_anchor"]["abstain_outcome"] == "correctly_answered").all()
 
 
 def test_evaluate_computes_distance_to_nearest_bound_when_outside_range() -> None:
@@ -321,7 +343,8 @@ def test_evaluate_computes_distance_to_nearest_bound_when_outside_range() -> Non
     result = evaluate(mapping, anchors)
 
     assert result["median_error"] == 10.0  # |120 - 110|
-    assert result["per_anchor"]["error"].iloc[0] == 10.0
+    assert result["per_anchor"]["error_frames"].iloc[0] == 10.0
+    assert result["per_anchor"]["correct"].iloc[0] is np.False_
 
 
 def test_evaluate_counts_correct_abstention_as_true_positive_not_position_error() -> None:
@@ -363,6 +386,36 @@ def test_evaluate_flags_a_missed_match_where_ground_truth_has_one() -> None:
     result = evaluate(mapping, anchors)
 
     assert result["abstain_false_positive"] == 1
+    row = result["per_anchor"].iloc[0]
+    assert row["abstain_outcome"] == "wrongly_abstained"
+    assert pd.isna(row["correct"])  # not applicable, not False -- there is no position to score
+    assert pd.isna(row["error_frames"])
+
+
+def test_evaluate_per_anchor_includes_every_anchor_not_just_scored_ones() -> None:
+    """Regression test: abstention-category anchors (no position to score) must still get a row
+    in `per_anchor` -- a real gap the user caught (the first version silently dropped them, so
+    `outputs/evaluation_anchors.csv` looked like anchors 2600/2650/183-style rows had vanished
+    rather than been abstained on)."""
+    anchors = _anchors(
+        [
+            {"runA_frame": 1, "lo": 100, "hi": 100, "quality": "sure"},  # scored
+            {"runA_frame": 2, "lo": None, "hi": None, "quality": "no_match"},  # gt no_match
+        ]
+    )
+    mapping = _mapping(
+        [
+            {"runA_frame": 1, "runB_frame": 100, "confidence": 0.9, "status": "matched"},
+            {"runA_frame": 2, "runB_frame": None, "confidence": None, "status": "no_match"},
+        ]
+    )
+
+    result = evaluate(mapping, anchors)
+
+    assert len(result["per_anchor"]) == 2  # not just the 1 scored anchor
+    per_anchor = result["per_anchor"]
+    outcomes = dict(zip(per_anchor["runA_frame"], per_anchor["abstain_outcome"], strict=True))
+    assert outcomes == {1: "correctly_answered", 2: "correctly_abstained"}
 
 
 def test_evaluate_by_confidence_tier_breakdown() -> None:

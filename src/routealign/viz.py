@@ -72,9 +72,9 @@ def plot_similarity_matrix(
 ) -> None:
     """Save a similarity matrix as a heatmap with a path overlaid.
 
-    Generic over what `path` represents: Step 3 calls this with the unconstrained per-row argmax
-    (plan.md §5's "corner aliasing" diagnostic, showing where naive nearest-neighbour matching
-    would jump around); Step 4/5 reuse the same function for the actual DTW path once that exists.
+    Generic over what `path` represents: the unconstrained per-row argmax produces the "corner
+    aliasing" diagnostic (showing where naive nearest-neighbour matching would jump around);
+    the same function is reused for the actual DTW path once one exists.
 
     Args:
         similarity: float64[NA, NB] similarity matrix (runA rows, runB columns).
@@ -90,6 +90,53 @@ def plot_similarity_matrix(
     ax.set_title(title)
     fig.colorbar(im, ax=ax, label="similarity")
     fig.tight_layout()
+    Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, dpi=120)
+    plt.close(fig)
+
+
+def _brighten(img: NDArray[np.uint8], gamma: float) -> NDArray[np.uint8]:
+    """Gamma-correct an image for display only -- these dashcam frames run dark (overcast,
+    tree shade, rain), and a report figure a reader cannot actually see is useless. Never used
+    on the path the matching pipeline itself reads (`descriptors.py`/`similarity.py` read the
+    JPEG cache directly, not through this function).
+
+    Args:
+        img: uint8[H, W, 3] RGB image.
+        gamma: Exponent applied to normalised pixel values; `<1` brightens, `1` is a no-op.
+
+    Returns:
+        uint8[H, W, 3] gamma-corrected image.
+    """
+    normalised = img.astype(np.float64) / 255.0
+    return np.clip(np.power(normalised, gamma) * 255.0, 0, 255).astype(np.uint8)
+
+
+def plot_frame_comparison(
+    panels: list[tuple[NDArray[np.uint8], str]],
+    suptitle: str,
+    out_path: str | Path,
+    gamma: float = 0.6,  # why: these frames run dark; 0.6 keeps colour but lifts shadows enough
+) -> None:  #      to read on a printed page (one failure-case panel was unreadable at 1.0)
+    """Lay `panels` out side by side with per-panel captions, for the T2 failure-taxonomy
+    figures: a runA query frame next to its predicted and/or ground-truth runB match(es), so a
+    reader sees the same evidence the reported numbers are based on.
+
+    Args:
+        panels: `(image, caption)` pairs, left to right. Images are `uint8[H, W, 3]` RGB
+            (`frames.FrameStore.get_rgb`), any height/width -- not required to match between
+            panels.
+        suptitle: Figure title.
+        out_path: File to save the PNG to (parent directories are created if missing).
+        gamma (float, optional): Display-only brightening, see `_brighten`. Defaults to 0.6.
+    """
+    fig, axes = plt.subplots(1, len(panels), figsize=(4.2 * len(panels), 4.6))
+    for ax, (img, caption) in zip(np.atleast_1d(axes), panels, strict=True):
+        ax.imshow(_brighten(img, gamma))
+        ax.set_title(caption, fontsize=9)
+        ax.axis("off")
+    fig.suptitle(suptitle, fontsize=11)
+    fig.tight_layout(rect=(0.0, 0.0, 1.0, 0.94))
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, dpi=120)
     plt.close(fig)

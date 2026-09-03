@@ -315,3 +315,178 @@ urgent, not less, now that the pipeline's confidence numbers are no longer artif
 
 **Evidence**: window sweep output, real `align`/`verify` re-run, `evaluate()` output -- all
 reproduced directly, not asserted from memory (`findings.md`).
+
+## D11 — `evaluate()`'s `per_anchor` keeps every anchor; position metrics stay filtered
+
+**Choice:** `groundtruth.evaluate`'s returned `per_anchor` DataFrame (and the persisted
+`outputs/evaluation_anchors.csv`) always has one row per labelled anchor (22), tagged with a
+4-way `abstain_outcome` column (`correctly_answered` / `correctly_abstained` / `wrongly_abstained`
+/ `wrongly_guessed`). The scalar metrics (`median_error`, `p90_error`, `hit@k`, `by_confidence_tier`)
+still average only over the subset where both sides gave a position (`n_scored=19` of 22).
+
+**Alternatives considered:**
+1. *Keep filtering the file to match the metrics* (original implementation) -- rejected: this is
+   what caused the bug being fixed here. A reader of the CSV cannot tell "this anchor was excluded
+   on purpose, here's why" from "this anchor doesn't exist" -- the file actively hid the
+   pipeline's 3 most edge-case-relevant rows (183, 2600, 2650).
+2. *Force a position error onto abstention rows* (e.g. treat "no prediction" as an infinite or
+   very large error, fold it into `median_error`/`p90_error`) -- rejected: conflates two different
+   questions ("was the abstain decision itself correct" vs. "how far off was the guessed
+   position") into one number, which would make `p90_error` worse at correctly abstaining more
+   often -- exactly the wrong incentive for a system whose no-match rule is supposed to be judged
+   on honesty, not penalised for it.
+3. *`correct` as a plain bool, abstention rows coded `False`* -- rejected: would make 183 (a
+   near-miss abstention) numerically indistinguishable from an ordinary wrong answer, discarding
+   the distinction the user was specifically asking to see. Used pandas nullable boolean
+   (`dtype="boolean"`, `<NA>`) instead so "not applicable" is representable and doesn't silently
+   coerce to `False`.
+
+**Why this matters for the write-up**: T2's grading criterion is honesty of the accuracy estimate,
+not just its point value. A metrics file that quietly drops the cases nearest the decision
+boundary (183 missed by 0.06 in `ridge_z`; 2650 let through at the lowest tier) would understate
+exactly the information most relevant to defending `tau=0.75` in an interview.
+
+**Evidence**: `findings.md`'s "`evaluation_anchors.csv` was silently dropping 3 anchors" entry
+(2026-09-01) -- full per-row trace against `mapping_full.csv`'s pre-blanking fields, 89/89 tests
+green including a new regression test guarding this exact contract
+(`test_evaluate_per_anchor_includes_every_anchor_not_just_scored_ones`).
+
+## D12 — Task 3's manifest: flag-heavy/discard-light, and four scoped simplifications
+
+**Choice:** `policy.build_manifest` implements all 8 of plan.md §9's rules, but only rule 1 (no
+decoded frame) is a hard discard (`keep=False`); every other rule attaches a column a downstream
+consumer filters on explicitly (`interval_irregular`, `dedup_keep`, `tail_zone`,
+`lens_occlusion`, `corr_status`) rather than removing the row pre-emptively.
+
+**Why flag-heavy over discard-heavy**: the brief asks two separate questions -- "which frames
+would you keep/discard" and "what would you attach so a consumer can't silently misuse it". A
+stationary frame is redundant for training diversity but might be exactly what a "does the model
+correctly recognise a parked/idle scene" eval wants; discarding it pre-emptively answers a
+question we weren't asked and can't take back. Attaching the fact and letting the consumer decide
+is strictly more useful and more honest about what we actually know.
+
+**Four scoped simplifications, each a real design call, not an oversight:**
+
+1. **`corr_status="not_applicable"` for every runB row.** Task 2's deliverable is directional --
+   runA to runB (plan.md §0.1: "for a frame in runA, which frame in runB..."). A reverse
+   runB-to-runA mapping was never computed or evaluated against ground truth. Inventing one now
+   (e.g. by grouping `mapping.csv` by `runB_frame`) would attach an unvalidated number to every
+   runB row with no accuracy estimate behind it -- worse than admitting "not computed."
+2. **`lens_occlusion`/`weather`/`lighting` are per-`(run, cam)` constants, not per-frame
+   detectors.** Real, established findings (findings.md: runA sunny/hard-shadow, runB
+   overcast/light-rain; cam5 structurally more exposed to passing traffic than kerb-facing cam0)
+   but qualitative and not localised to exact frame ranges. A precise per-frame occlusion
+   detector was not built -- out of scope for the time available, and not requested by the brief
+   ("be concrete" is satisfied by an honest, defensible caveat, not a fabricated precision).
+3. **Depot merge uses a fixed `depot_runb_margin` (50 frames) from either end of runB's route**,
+   not each run's own empirically-different stationary segment. Real data showed the two runs'
+   stationary segments are not symmetric (runA: 233 frames across two segments including a
+   previously-unremarked end-of-route segment at `(2614,2673)`; runB: 42 frames, much shorter --
+   `frames.stationary_segments`, re-verified this session). A margin keyed to each run's own
+   segment bounds would be more precise but adds real complexity for a rule whose main job is
+   preventing split leakage, not modelling exactly where the vehicle stopped.
+4. **`split` is a simple contiguous 70/15/15 block over sorted `place_id`** (`policy._assign_split`),
+   not a randomised or stratified split. Deterministic by construction (no shuffling needed --
+   position order already fixes it), so `config.yaml` has no `split_seed`. A real consumer may
+   reasonably want a different ratio or stratification; the manifest's job is making leakage
+   *possible to avoid* (via `place_id`), not dictating the one correct split policy.
+
+**Checked, not assumed**: corrupt-decode and exact-duplicate-frame detection, the one apparent gap
+in rule 1 itself (not one of the four scoped simplifications above), turned out to need no new
+manifest column -- re-decoding all 4 streams at `-v warning` (stricter than production's `-v
+error`) surfaced zero concealment/corruption warnings, and `motion_energy` (already computed) was
+exactly 0.0 for zero consecutive-frame pairs across all 4 streams. `keep=decode_ok` is therefore
+evidence-backed as complete for this dataset, not merely the only rule that happened to get built
+(findings.md, 2026-09-01).
+
+**A real bug found running on the full dataset, not just synthetic fixtures**: `frames.motion_energy`
+returns `decoded_count - 1` values (one per `(k, k+1)` transition -- its own docstring says so),
+but the first implementation indexed it as if it had `decoded_count` values, `IndexError`ing on
+the very last decoded frame of runA (2674 vs. motion array size 2673). The synthetic test fixture
+had made the same wrong assumption (equal-sized arrays), so it did not catch this -- fixed in both
+places, plus a dedicated regression test
+(`test_attach_motion_does_not_crash_on_the_last_decoded_frame`) so an equal-sized fixture can't
+hide this class of bug again.
+
+**Evidence**: `outputs/keep_manifest.csv` (2026-09-01 run) -- `keep=10585 discard=131`, 131 exactly
+matching the independently-known `no_frame` gap (21+41+48, findings.md); `corr_status` counts
+exactly double `outputs/mapping.csv`'s per-runA-frame status counts (4976/248/124/42 vs.
+2488/124/62/21), confirming correspondence was correctly duplicated across both cameras; depot
+rows spot-checked at both ends of runB's real route and one real interpolated `no_match` row
+(runA frame 183) -- `corr_frame` stays honestly `NaN` in the output, only the derived `place_id`
+uses the interpolated position. 107/107 tests green, `ruff check`/`format --check` clean.
+
+## D13 — `plan.md`/`findings.md`/`decisions.md` never cited from deliverable-facing content
+
+**Choice:** no file that is part of what gets submitted or read by an interviewer (`src/`,
+`tests/`, `config.yaml`, `README.md`, `report/report.tex`, `outputs/SCHEMA.md`, generated
+`outputs/` text) names `plan.md`, `findings.md` or `decisions.md`. Every `# why:`
+comment/docstring/report sentence that used to point to one of them instead states the actual
+reasoning or evidence inline.
+
+**Alternatives considered:** (a) keep the citations, since they are true and the files really do
+exist -- rejected, per the user's explicit instruction: these three files are working notes for
+this session, not a claim about what the deliverable itself should assume its reader has open.
+(b) Remove the citations but leave a dangling, now-unjustified comment (just delete the trailing
+clause) -- rejected for magic-number/threshold comments specifically, since CLAUDE.md §4 requires
+every threshold to carry a real reason, not just a value; every removed citation was replaced with
+the substance, not silently dropped.
+
+**Why this matters beyond tidiness**: a `# why: plan.md §7` comment is only actually useful to
+someone who also has `plan.md` open -- for the shipped code and report, that is precisely the
+audience that should not need to. Restating the reason inline is also a real correctness check:
+two comments turned out to be citing a now-stale claim (DINOv2 "not run in this environment yet";
+a ground-truth methodology description one revision behind the final one) that a bare citation
+had let go unnoticed.
+
+**Scope boundary, not fully resolved**: `gt/labelling_protocol.md` (used only during the internal
+labelling process) and `notebooks/` (explicitly non-deliverable per CLAUDE.md's own "nothing in
+outputs/ may come from a notebook" rule) still reference the three files -- left alone as outside
+the scope confirmed with the user, not overlooked; worth a follow-up ask if the definition of
+"deliverable-facing" should extend further.
+
+**Evidence**: findings.md's "Internal-notes references removed" entry (2026-09-01) -- ~130
+citations removed across every in-scope file, 2 real staleness bugs caught in the process, 2
+generated output files regenerated (not hand-edited) to match the fixed source, 107/107 tests
+green, report still builds at 5 pages.
+
+## D14 — README pipeline diagram shows data dependencies, not Makefile execution order
+
+**Choice:** an arrow in the README's mermaid diagram means "this stage genuinely reads that file/
+cache as input", verified against each `_cmd_*` function's actual body, not inferred from the
+Makefile's listed target order. Two stages with no arrow between them (`verify-data`/`decode`,
+`characterise` vs. `decode`, `gt-sheets` vs. `align`/`verify`) are truly independent even though
+`make all` happens to run them in a fixed sequence.
+
+**Alternatives considered**: redraw the whole diagram as a linear chain matching `make all`'s
+literal order (each stage arrow-connected to the next regardless of real data need) -- rejected
+by the user: it would overstate real dependencies (e.g. implying `describe` can't start until
+`characterise` finishes, when neither needs the other) and obscure genuine parallelism, which is
+useful information a reader loses under a purely execution-order view.
+
+**Why the Makefile still lists them sequentially anyway, despite no data need**: fail-fast
+(`verify-data` before `decode`/`characterise` -- don't spend time on a file already known
+corrupt) and a methodological guarantee (`gt-sheets` after `align`/`verify` -- makes it obvious
+the model-blind labelling sheets were generated without having looked at the pipeline's own
+predictions first, even though nothing would break if the order were reversed). This reasoning
+lives in the README's prose, not the diagram itself, since it is about operational intent, not
+data flow.
+
+**A second, more consequential decision made while auditing this**: `step3_similarity_argmax_
+diagnostic.png`/`step4_dtw_path_diagnostic.png` (embedded in the report) turned out to be
+produced by no CLI subcommand at all -- an orphaned one-off artifact from early exploration,
+computed from a SeqSLAM-cam0-only matrix, not the `S_joint` the report's own ablation number
+(argmax-only p90=556.3) actually quotes. Fixed by generating both figures inside `_cmd_align`,
+from the exact `S_joint`/`path_joint` already in scope there -- the natural, only place both
+arrays exist together right after being computed, and the same arrays the shipped mapping and
+that ablation number both come from. Alternative considered: leave as a documented known
+limitation given limited time -- rejected once found, since the fix was small (reuses
+`viz.plot_similarity_matrix`, already written) and the alternative (a report that cannot actually
+be reproduced from a clean cache) undermines the "reproducibility" claim this whole project is
+graded partly on.
+
+**Evidence**: findings.md's "README pipeline diagram audited against the real code" entry
+(2026-09-02) -- every corrected arrow checked against the actual function body, not assumed;
+`align` re-run for real (8.2s, cache hits), `mapping_draft.csv` unchanged (2674 rows, path length
+2814); new diagnostic figures visually confirmed to tell the same story; `report/report.pdf`
+rebuilt, still 5 pages; 107/107 tests green.

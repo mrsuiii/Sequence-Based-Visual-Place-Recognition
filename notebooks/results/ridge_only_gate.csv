@@ -1,0 +1,10 @@
+configuration,false_abstain_n,false_abstain_rate,ridge_2600,caught_2600,ridge_2650,caught_2650
+SeqSLAM early-fusion (concat),0,0.0,0.8977905422655968,False,1.4592871937131255,False
+DINOv2 early-fusion (concat),0,0.0,0.4615666094612546,True,0.786674032321212,False
+Full joint early-fusion,0,0.0,0.39338231645002414,True,1.0217226512925677,False
+SeqSLAM late-fusion (current),1,0.05,0.3596354381642381,True,1.167910327455931,False
+DINOv2 late-fusion (current),1,0.05,0.5604900062543421,True,0.7767341848691025,False
+"cam0-only (both desc, late-fused)",0,0.0,0.7506434739201503,False,1.3133226571869547,False
+"cam5-only (both desc, late-fused)",2,0.1,0.9435111735989572,False,0.9007246152971913,False
+Joint late-fusion -- SHIPPED,1,0.05,0.363920101770856,True,0.7932087103386983,False
+argmax-only on S_joint (no DTW),0,0.0,1.5917611867678736,False,1.4725916396030927,False

@@ -1,10 +1,9 @@
 """Model-blind labelling sheets, label loading/merge, evaluation, the deletion test.
-Step 6 (plan.md §8).
 
 Labelling is user-primary; Claude's pass afterward is a QA/consistency check, not an independent
-co-labeller (plan.md §0.2, §13) -- the two share a vision backbone with the pipeline's own DINOv2
-descriptor and are not statistically independent judges. `evaluate` must report user-vs-Claude
-agreement as a sanity number, never as inter-rater reliability or a label-noise floor.
+co-labeller -- the two share a vision backbone with the pipeline's own DINOv2 descriptor and are
+not statistically independent judges. `evaluate` must report user-vs-Claude agreement as a
+sanity number, never as inter-rater reliability or a label-noise floor.
 """
 
 from __future__ import annotations
@@ -32,7 +31,8 @@ def stratum_s_indices(
     fixed: tuple[int, ...] = (60, 150, 2600, 2650),
 ) -> NDArray[np.int64]:
     """Pick stratum S's 22 runA anchor indices: an evenly-spaced, seeded-jitter sweep plus a few
-    fixed positions of known interest (plan.md §8).
+    fixed positions of known interest (the plateau at 60/150, the loop-closure tail at
+    2600/2650).
 
     Args:
         seed: RNG seed -- determinism (CLAUDE.md §4): the same seed always gives the same anchors.
@@ -157,9 +157,9 @@ def make_sheets(
 def load_labels(gt_dir: str | Path) -> pd.DataFrame:
     """Load `gt/anchors_user.csv` and `gt/anchors_claude.csv`.
 
-    Loads whichever of the two files exist -- as of this session only `anchors_user.csv` exists
-    (decisions.md D8: Claude produced its primary fill directly, inverting the originally-planned
-    user-blind / Claude-QA split, so there is no separate `anchors_claude.csv` pass yet).
+    Loads whichever of the two files exist -- only `anchors_user.csv` exists so far, from the
+    user's own frame-by-frame verification pass; a separate Claude QA pass was never split out
+    into its own `anchors_claude.csv` file.
 
     Args:
         gt_dir: Directory containing the label CSVs.
@@ -188,7 +188,7 @@ def load_labels(gt_dir: str | Path) -> pd.DataFrame:
 
 def _wilson_ci(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
     """Wilson score interval for a binomial proportion -- safer than a normal-approximation CI
-    at the small sample sizes (~24 test anchors) this project's anchor set has (plan.md §13).
+    at the small sample sizes (fewer than 25 anchors) this project's anchor set has.
 
     Args:
         k: Number of successes.
@@ -211,7 +211,7 @@ def evaluate(mapping: pd.DataFrame, anchors: pd.DataFrame) -> dict:
     """Compute error, hit@k and Wilson-95%-CI metrics against merged ground-truth anchors.
 
     Position error (`error = 0` if the prediction lies in `[lo, hi]`, else distance to the
-    nearest end -- plan.md §8) is scored only over anchors where *both* sides have a real
+    nearest end) is scored only over anchors where *both* sides have a real
     answer: ground truth `quality != "no_match"` and the pipeline actually predicted a
     `runB_frame` (didn't abstain). Anchors where one side has an answer and the other doesn't
     are counted separately, as abstention (dis)agreement, not folded into the position-error
@@ -226,8 +226,24 @@ def evaluate(mapping: pd.DataFrame, anchors: pd.DataFrame) -> dict:
     Returns:
         dict with `n_scored`, `n_total_anchors`, `median_error`, `p90_error`, `hit_at_2/5/10`,
         `hit_at_5_wilson_ci`, `abstain_true_positive/false_negative/false_positive`,
-        `by_confidence_tier` (`{tier: {n, n_correct, accuracy}}`), and `per_anchor` (the scored
-        rows' own error/tier/status, for building failure-case figures).
+        `by_confidence_tier` (`{tier: {n, n_correct, accuracy}}`), and `per_anchor` -- prediction
+        vs. ground truth side by side, columns prefixed by which side they come from so the two
+        are never confused (this is meant to be saved as a real, inspectable artifact, not just
+        aggregated away). **Every** anchor gets a row, not only the `n_scored` ones -- `runA_frame`,
+        `pipeline_runB_frame` (the prediction, empty if the pipeline abstained),
+        `gt_runB_best`/`gt_lo`/`gt_hi`/`gt_quality`/`gt_note` (the labeller's answer and its own
+        context, empty if ground truth is `no_match`), `error_frames` (0 if
+        `pipeline_runB_frame` falls in `[gt_lo, gt_hi]`, else distance to the nearest end;
+        empty for the anchors position error doesn't apply to), `correct` (nullable bool,
+        `error_frames == 0` -- the direct right/wrong verdict, `<NA>` where not applicable),
+        `abstain_outcome` (`correctly_answered` -- the usual `n_scored` case, ground truth has a
+        match and the pipeline gave one; `correctly_abstained`; `wrongly_guessed` -- ground truth
+        `no_match` but the pipeline answered anyway; `wrongly_abstained` -- ground truth has a
+        real match but the pipeline abstained, the abstention rule's false-positive case).
+        `pipeline_status`/`pipeline_confidence` describe whether the pipeline *abstained*, which
+        is a different question from whether it was *correct* -- never read
+        `pipeline_status == "matched"` as "this row was right", and never read a `no_match` row
+        as simply missing from the table.
     """
     merged = anchors.merge(mapping, on="runA_frame", how="left")
 
@@ -238,8 +254,9 @@ def evaluate(mapping: pd.DataFrame, anchors: pd.DataFrame) -> dict:
     # Such a row cannot be scored for position error either way, and must not be allowed to
     # poison the whole batch: np.median/np.percentile propagate a single NaN to every output.
     has_gt_range = merged["lo"].notna() & merged["hi"].notna()
+    is_scored = has_gt_match & has_gt_range & has_prediction
 
-    scored = merged[has_gt_match & has_gt_range & has_prediction].copy()
+    scored = merged[is_scored].copy()
     pred = scored["runB_frame"].to_numpy(dtype=np.float64)
     lo = scored["lo"].to_numpy(dtype=np.float64)
     hi = scored["hi"].to_numpy(dtype=np.float64)
@@ -251,12 +268,17 @@ def evaluate(mapping: pd.DataFrame, anchors: pd.DataFrame) -> dict:
     n_hit5 = int(np.sum(error <= 5)) if error.size else 0
     ci_hit5 = _wilson_ci(n_hit5, error.size)
 
-    # abstention (dis)agreement: does the pipeline correctly know when it doesn't know?
+    # abstention (dis)agreement: does the pipeline correctly know when it doesn't know? Every
+    # anchor falls into exactly one of these 4 buckets (a full confusion matrix on "should this
+    # row have a position answer at all"), independent of whether it happens to also be missing
+    # lo/hi -- that's a separate, data-quality axis, not folded into this one.
     should_abstain = ~has_gt_match
     did_abstain = ~has_prediction
-    abstain_tp = int(np.sum(should_abstain & did_abstain))
-    abstain_fn = int(np.sum(should_abstain & ~did_abstain))  # gt no_match, model guessed anyway
-    abstain_fp = int(np.sum(~should_abstain & did_abstain))  # gt has a match, model abstained
+    abstain_tp = should_abstain & did_abstain  # correctly abstained
+    abstain_fn = should_abstain & ~did_abstain  # gt no_match, pipeline guessed anyway
+    abstain_fp = ~should_abstain & did_abstain  # gt has a match, pipeline abstained
+    abstain_tn = ~should_abstain & ~did_abstain  # gt has a match, pipeline answered (may or may
+    #                                               not end up in `is_scored`, if lo/hi is missing)
 
     by_tier: dict[float, dict[str, float]] = {}
     for tier, group in scored.groupby("confidence"):
@@ -268,6 +290,21 @@ def evaluate(mapping: pd.DataFrame, anchors: pd.DataFrame) -> dict:
             "accuracy": n_correct / n if n else float("nan"),
         }
 
+    # full per-anchor table: EVERY anchor (all 22), not just the `is_scored` subset -- the 3
+    # abstention-category rows are exactly as informative as the 19 scored ones (arguably more
+    # so: they are where the no-match rule's own precision/recall lives) and must not silently
+    # disappear from a saved artifact just because position error doesn't apply to them.
+    full = merged.copy()
+    full["error"] = np.nan
+    full.loc[scored.index, "error"] = error
+    full["correct"] = pd.array([pd.NA] * len(full), dtype="boolean")
+    full.loc[scored.index, "correct"] = full.loc[scored.index, "error"] == 0.0
+    full["abstain_outcome"] = np.select(
+        [abstain_tp, abstain_fn, abstain_fp, abstain_tn],
+        ["correctly_abstained", "wrongly_guessed", "wrongly_abstained", "correctly_answered"],
+        default="unreachable",  # the 4 conditions are exhaustive (should_abstain x did_abstain);
+    )  # np.select still requires a same-dtype default -- this should never actually appear
+
     return {
         "n_scored": int(scored.shape[0]),
         "n_total_anchors": int(merged.shape[0]),
@@ -277,13 +314,38 @@ def evaluate(mapping: pd.DataFrame, anchors: pd.DataFrame) -> dict:
         "hit_at_5": hit_at.get(5, float("nan")),
         "hit_at_10": hit_at.get(10, float("nan")),
         "hit_at_5_wilson_ci": ci_hit5,
-        "abstain_true_positive": abstain_tp,
-        "abstain_false_negative": abstain_fn,
-        "abstain_false_positive": abstain_fp,
+        "abstain_true_positive": int(abstain_tp.sum()),
+        "abstain_false_negative": int(abstain_fn.sum()),
+        "abstain_false_positive": int(abstain_fp.sum()),
         "by_confidence_tier": by_tier,
-        "per_anchor": scored[
-            ["runA_frame", "runB_frame", "lo", "hi", "error", "confidence", "status"]
-        ],
+        "per_anchor": full[
+            [
+                "runA_frame",
+                "runB_frame",
+                "runB_best",
+                "lo",
+                "hi",
+                "correct",
+                "error",
+                "abstain_outcome",
+                "confidence",
+                "status",
+                "quality",
+                "note",
+            ]
+        ].rename(
+            columns={
+                "runB_frame": "pipeline_runB_frame",
+                "runB_best": "gt_runB_best",
+                "lo": "gt_lo",
+                "hi": "gt_hi",
+                "error": "error_frames",
+                "confidence": "pipeline_confidence",
+                "status": "pipeline_status",
+                "quality": "gt_quality",
+                "note": "gt_note",
+            }
+        ),
     }
 
 

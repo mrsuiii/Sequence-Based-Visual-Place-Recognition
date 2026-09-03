@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import subprocess
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -22,6 +23,7 @@ from . import (
     frames,
     groundtruth,
     io_video,
+    policy,
     similarity,
     timestamps,
     verify,
@@ -144,9 +146,9 @@ def _write_task1_table(rows: list[dict], out_path: Path) -> None:
         "content: the SPS/VUI `time_scale/num_units_in_tick`, independently confirmed against "
         "ffprobe's `r_frame_rate` (the two agree exactly). Two other candidate labels were found, "
         'investigated and rejected rather than silently omitted — see "Other frame-rate labels" '
-        "below and `findings.md`. `declared fps` is still not the actual rate; see "
+        "below. `declared fps` is still not the actual rate; see "
         "`measured fps`, computed from `timestamps.txt` interval arithmetic. Full provenance "
-        "for every figure is in the per-camera JSON files next to this table and in `findings.md`.",
+        "for every figure is in the per-camera JSON files next to this table.",
         "",
         "| run/cam | frames (decoded / lines) | resolution | file size | declared fps (nominal) | "
         "measured fps | route time (s) | recorded (UTC) |",
@@ -278,7 +280,7 @@ def _cmd_characterise(cfg: Config) -> int:
                             "reason_rejected": (
                                 "proven generic fallback for headerless elementary streams: a "
                                 "synthetic test file encoded at a known true 17 fps still reports "
-                                "avg_frame_rate=25/1, identical to this file -- see findings.md"
+                                "avg_frame_rate=25/1, identical to this file"
                             ),
                         },
                     },
@@ -441,6 +443,9 @@ def _cmd_align(cfg: Config, limit: int | None, force: bool) -> int:
     fused across descriptors within each camera (-> `S_cam0`/`S_cam5`, feeds `cam_disagree`) and
     across cameras within each descriptor (-> `S_seqslam`/`S_dinov2`, feeds `desc_disagree`); the
     full joint fusion (`S_joint`) combines all four and is what the draft mapping is built from.
+    Also writes the argmax-vs-DTW diagnostic figures (`outputs/inspection/figures/step3_*`,
+    `step4_*`) from this same `S_joint`/`path_joint`, so the report's diagnostic images and its
+    quoted ablation numbers are never computed from two different things.
 
     Args:
         cfg: Loaded configuration.
@@ -451,7 +456,7 @@ def _cmd_align(cfg: Config, limit: int | None, force: bool) -> int:
         0 on success.
     """
     # window=50 (tuned for SeqSLAM's patch-level noise) collapses DINOv2's DTW path onto a
-    # single attractor column -- each descriptor gets its own window (decisions.md D10).
+    # single attractor column -- each descriptor gets its own window instead.
     window_cfg = {
         "seqslam": cfg.raw["similarity"]["contrast_window_seqslam"],
         "dinov2": cfg.raw["similarity"]["contrast_window_dinov2"],
@@ -477,10 +482,10 @@ def _cmd_align(cfg: Config, limit: int | None, force: bool) -> int:
 
     # cam0 and cam5 share one timestamp file (H0: same column index = same nominal instant,
     # CLAUDE.md §5), but can have different decoded counts (measured: runB cam0=2622,
-    # cam5=2615, findings.md) -- pad the shorter camera's columns with the worst possible
+    # cam5=2615) -- pad the shorter camera's columns with the worst possible
     # z-score (-3) rather than truncating both to the shorter length, so a camera that never
     # decoded those frames simply casts no vote there instead of silently losing real cam0
-    # evidence for columns cam5 never had (decisions.md).
+    # evidence for columns cam5 never had.
     for key, s in raw_s.items():
         if s.shape[1] < n_b_max:
             pad = np.full((s.shape[0], n_b_max - s.shape[1]), -3.0, dtype=np.float64)
@@ -503,6 +508,25 @@ def _cmd_align(cfg: Config, limit: int | None, force: bool) -> int:
 
     np.save(cache_dir / "S_joint.npy", s_joint)
     np.save(cache_dir / "path_joint.npy", path_joint)
+
+    # Step 3/4 diagnostic figures, on the exact S_joint/path_joint the shipped mapping and the
+    # ablation table's "argmax-only" row both use -- so the figure and the quoted numbers are
+    # never talking about two subtly different computations.
+    fig_dir = cfg.path("outputs_dir") / "inspection" / "figures"
+    argmax_per_row = np.argmax(s_joint, axis=1).astype(np.int32)
+    argmax_path = np.column_stack([np.arange(s_joint.shape[0], dtype=np.int32), argmax_per_row])
+    viz.plot_similarity_matrix(
+        s_joint,
+        argmax_path,
+        "runA vs runB, joint (SeqSLAM+DINOv2, cam0+cam5) -- unconstrained argmax",
+        fig_dir / "step3_similarity_argmax_diagnostic.png",
+    )
+    viz.plot_similarity_matrix(
+        s_joint,
+        path_joint,
+        f"runA vs runB, joint (SeqSLAM+DINOv2, cam0+cam5) -- DTW open-ends path (lam={lam})",
+        fig_dir / "step4_dtw_path_diagnostic.png",
+    )
     for cam, s in per_cam.items():
         cost = 3.0 - np.clip(s, -3.0, 3.0)
         path = align.dtw_open_ends(cost, lam=lam)
@@ -517,7 +541,7 @@ def _cmd_align(cfg: Config, limit: int | None, force: bool) -> int:
     # runB stationary segments, to widen path_to_mapping's [lo, hi]. frames.stationary_segments
     # returns Python-slice convention (end EXCLUSIVE); path_to_mapping's stationary_b expects
     # inclusive (lo, hi) pairs (its docstring/tests) -- convert once, here, at the boundary
-    # between the two conventions (decisions.md), rather than silently being off-by-one.
+    # between the two conventions, rather than silently being off-by-one.
     store_b0, store_b5 = _open_store(cfg, "runB", "cam0"), _open_store(cfg, "runB", "cam5")
     motion_b0 = frames.motion_energy(
         store_b0, cfg.raw["frames"]["motion_thumb_w"], cfg.raw["frames"]["motion_thumb_h"]
@@ -601,10 +625,10 @@ def _cmd_verify(cfg: Config) -> int:
     argmax_path = np.column_stack([np.arange(n_a, dtype=np.int32), argmax_per_row])
     mapping["argmax_disagree"] = verify.path_disagreement(path_joint, argmax_path)
 
-    mapping["sift_inliers"] = np.nan  # SIFT cut by default (plan.md §7)
+    mapping["sift_inliers"] = np.nan  # SIFT verification not built (config.yaml verify.sift)
     mapping["ambiguity"] = mapping["hi"] - mapping["lo"]
     mapping["ambiguous_range"] = mapping["ambiguity"] > 0
-    mapping["no_video"] = False  # every row here came from a real decoded frame (align's n_a)
+    mapping["no_frame"] = False  # every row here came from a real decoded frame (align's n_a)
 
     fused = confidence.fuse_confidence(mapping, tau=cfg.raw["confidence"]["no_match_tau_default"])
 
@@ -627,11 +651,11 @@ def _cmd_verify(cfg: Config) -> int:
         _iso_utc(int(ts_b[j])) if j < ts_b.size else None for j in fused["runB_frame"]
     ]
 
-    # H0 tail: timestamp lines beyond this run's decoded count have no video at all (CLAUDE.md
+    # H0 tail: timestamp lines beyond this run's decoded count have no frame at all (CLAUDE.md
     # §5) -- append them so outputs/mapping.csv covers every timestamp line, not just decoded
     # frames, matching the "2695 runA rows" definition of done (CLAUDE.md §7). Only meaningful
     # for a full (unlimited) run: under --limit, n_a is an artificial cap, not the true decoded
-    # count, so the "tail" would misclassify real video as no_video -- skipped in that case.
+    # count, so the "tail" would misclassify a real frame as no_frame -- skipped in that case.
     full_decoded_a = store_a0.n_frames
     if n_a == full_decoded_a:
         tail_k = np.arange(full_decoded_a, ts_a.size)
@@ -644,8 +668,8 @@ def _cmd_verify(cfg: Config) -> int:
                     "hi": np.nan,
                     "boundary_clamped": False,
                     "confidence": np.nan,
-                    "status": "no_video",
-                    "reason": "no video for this row",
+                    "status": "no_frame",
+                    "reason": "no decoded frame for this row",
                     "runA_time_utc": [_iso_utc(int(ts_a[k])) for k in tail_k],
                     "runB_time_utc": None,
                     "ridge_z": np.nan,
@@ -662,7 +686,7 @@ def _cmd_verify(cfg: Config) -> int:
                 }
             )
             fused = pd.concat([fused, tail], ignore_index=True)
-            print(f"appended {tail_k.size} no_video tail rows ({full_decoded_a}..{ts_a.size - 1})")
+            print(f"appended {tail_k.size} no_frame tail rows ({full_decoded_a}..{ts_a.size - 1})")
 
     out_dir.mkdir(parents=True, exist_ok=True)
     full_path = out_dir / "mapping_full.csv"
@@ -691,12 +715,12 @@ def _cmd_verify(cfg: Config) -> int:
         "method",
     ]
     final = fused[final_cols].rename(columns={"lo": "runB_frame_lo", "hi": "runB_frame_hi"})
-    # plan.md §7 / CLAUDE.md: "empty runB_frame" is the no-match rule's actual output contract --
+    # "empty runB_frame" is the no-match rule's actual output contract --
     # mapping_full.csv keeps the raw computed value (useful for debugging why a row was
     # abstained), but the public mapping.csv must not report a runB_frame we've explicitly said
     # we don't trust. ambiguous_range rows keep theirs -- "somewhere in this range" is still real
-    # information; only no_match/no_video rows are blanked.
-    unmatched = final["status"].isin(["no_match", "no_video"])
+    # information; only no_match/no_frame rows are blanked.
+    unmatched = final["status"].isin(["no_match", "no_frame"])
     final.loc[unmatched, ["runB_frame", "runB_frame_lo", "runB_frame_hi", "runB_time_utc"]] = np.nan
     final_path = out_dir / "mapping.csv"
     final.to_csv(final_path, index=False)
@@ -705,10 +729,10 @@ def _cmd_verify(cfg: Config) -> int:
     n_matched = int((fused["status"] == "matched").sum())
     n_ambiguous = int((fused["status"] == "ambiguous_range").sum())
     n_no_match = int((fused["status"] == "no_match").sum())
-    n_no_video = int((fused["status"] == "no_video").sum())
+    n_no_frame = int((fused["status"] == "no_frame").sum())
     print(
         f"status: matched={n_matched} ambiguous_range={n_ambiguous} "
-        f"no_match={n_no_match} no_video={n_no_video}"
+        f"no_match={n_no_match} no_frame={n_no_frame}"
     )
     return 0
 
@@ -717,10 +741,10 @@ def _cmd_gt_sheets(cfg: Config) -> int:
     """Build stratum S's model-blind labelling sheets (anchor references + coarse runB overview).
 
     Only stratum S (22 anchors, a seeded deterministic sweep + fixed points of interest) is
-    built here -- 4 of stratum H's 8 anchors need the largest SeqSLAM/DINOv2 path disagreement
-    (plan.md §8), and DINOv2 has not been run in this environment yet (decisions.md D3). Fine
-    sheets are not built by this command either -- they need a per-anchor coarse pick from the
-    labeller's first pass over the coarse overview, which does not exist until that pass happens.
+    built here -- stratum H (8 anchors at the largest SeqSLAM/DINOv2 path disagreement) needs a
+    function that ranks runA rows by `desc_disagree` and isn't implemented yet. Fine sheets are
+    not built by this command either -- they need a per-anchor coarse pick from the labeller's
+    first pass over the coarse overview, which does not exist until that pass happens.
 
     Args:
         cfg: Loaded configuration.
@@ -748,9 +772,340 @@ def _cmd_gt_sheets(cfg: Config) -> int:
     print(f"stratum S: {len(anchors)} anchors: {anchors.tolist()}")
     print(f"wrote anchor references + coarse overview -> {out_dir}")
     print(
-        "stratum H not built yet -- needs DINOv2 (decisions.md D3); "
+        "stratum H not built yet -- needs a desc_disagree-ranking function; "
         "fine sheets need coarse picks from a first labelling pass"
     )
+    return 0
+
+
+def _cmd_evaluate(cfg: Config) -> int:
+    """Score `outputs/mapping.csv` against the ground-truth anchors; write a real, inspectable
+    per-anchor comparison table plus a summary, rather than leaving `evaluate`'s numbers as
+    something only ever seen in a terminal.
+
+    Args:
+        cfg: Loaded configuration.
+
+    Raises:
+        FileNotFoundError: If `outputs/mapping.csv` doesn't exist yet (`align`/`verify` not run),
+            or no ground-truth label file exists yet (`gt-sheets` + manual labelling not done).
+
+    Returns:
+        0 on success.
+    """
+    out_dir = cfg.path("outputs_dir")
+    mapping_path = out_dir / "mapping.csv"
+    if not mapping_path.exists():
+        raise FileNotFoundError(f"{mapping_path} not found -- run `align` then `verify` first")
+
+    mapping = pd.read_csv(mapping_path)
+    labels = groundtruth.load_labels(cfg.path("gt_dir"))
+    anchors = labels[labels["labeller"] == "user"].copy()
+
+    result = groundtruth.evaluate(mapping, anchors)
+
+    per_anchor_path = out_dir / "evaluation_anchors.csv"
+    result["per_anchor"].to_csv(per_anchor_path, index=False)
+
+    summary = {k: v for k, v in result.items() if k != "per_anchor"}
+    summary_path = out_dir / "evaluation_summary.json"
+    summary_path.write_text(json.dumps(summary, indent=2, default=str))
+
+    lo_ci, hi_ci = result["hit_at_5_wilson_ci"]
+    print(f"n_scored={result['n_scored']}/{result['n_total_anchors']}")
+    print(f"median_error={result['median_error']:.1f}  p90_error={result['p90_error']:.1f}")
+    print(
+        f"hit@2={result['hit_at_2']:.2f}  hit@5={result['hit_at_5']:.2f}  "
+        f"hit@10={result['hit_at_10']:.2f}  (hit@5 95% CI: [{lo_ci:.2f}, {hi_ci:.2f}])"
+    )
+    print(
+        f"abstain: true_positive={result['abstain_true_positive']} "
+        f"false_negative={result['abstain_false_negative']} "
+        f"false_positive={result['abstain_false_positive']}"
+    )
+    print("by_confidence_tier:")
+    for tier, stats in sorted(result["by_confidence_tier"].items()):
+        n, correct, acc = stats["n"], stats["n_correct"], stats["accuracy"]
+        print(f"  {tier}: n={n}  correct={correct}  accuracy={acc:.2f}")
+    print(f"\nwrote {per_anchor_path} and {summary_path}")
+    return 0
+
+
+# why: a one-time qualitative visual read per run/camera, not a per-frame measurement -- a
+# defensible simplification given the time available, not a precise per-frame detector
+_RUN_WEATHER = {"runA": "sunny", "runB": "overcast_light_rain"}
+_RUN_LIGHTING = {"runA": "daylight_hard_shadow", "runB": "daylight_overcast"}
+_CAM_LENS_OCCLUSION = {"cam0": "none", "cam5": "intermittent_traffic"}
+
+
+def _run_camera_facts(
+    cfg: Config, run: str, cam: str, sha256_by_file: dict[str, str]
+) -> policy.RunCameraFacts:
+    """Assemble one `(run, cam)`'s `RunCameraFacts` from Task 1's inspection JSON + integrity check.
+
+    Args:
+        cfg: Loaded configuration.
+        run: Run id.
+        cam: Camera id.
+        sha256_by_file: `{"runA/cam0_..._output.hevc": "<sha256>", ...}`, from
+            `outputs/inspection/integrity.json`.
+
+    Returns:
+        The assembled facts.
+    """
+    insp = json.loads((cfg.path("outputs_dir") / "inspection" / f"{run}_{cam}.json").read_text())
+    src_file = f"{run}/{cam}_20_yuv420p_output.hevc"
+    return policy.RunCameraFacts(
+        run=run,
+        cam=cam,
+        decoded_count=insp["frame_count"]["measured_decoded"],
+        src_file=src_file,
+        src_sha256=sha256_by_file[src_file],
+        fps_declared=insp["frame_rate"]["declared_nominal_fps"],
+        fps_measured=insp["frame_rate"]["measured_actual_fps"],
+        width=insp["resolution"]["declared_cropped_wh"][0],
+        height=insp["resolution"]["declared_cropped_wh"][1],
+        codec=insp["codec"]["codec_name"],
+        idr_indices=tuple(insp["gop"]["idr_indices"]),
+        weather=_RUN_WEATHER[run],
+        lighting=_RUN_LIGHTING[run],
+        lens_occlusion=_CAM_LENS_OCCLUSION[cam],
+    )
+
+
+def _cmd_manifest(cfg: Config) -> int:
+    """Task 3: build the per-frame keep/discard manifest.
+
+    Args:
+        cfg: Loaded configuration.
+
+    Raises:
+        FileNotFoundError: If `outputs/mapping.csv` doesn't exist yet (`align`/`verify` not run).
+
+    Returns:
+        0 on success.
+    """
+    out_dir = cfg.path("outputs_dir")
+    mapping_path = out_dir / "mapping.csv"
+    if not mapping_path.exists():
+        raise FileNotFoundError(f"{mapping_path} not found -- run `align` then `verify` first")
+    mapping = pd.read_csv(mapping_path)
+
+    integrity = json.loads((out_dir / "inspection" / "integrity.json").read_text())
+    sha256_by_file = {f["file"]: f["actual"] for f in integrity["files"]}
+
+    run_cameras: list[policy.RunCameraFacts] = []
+    timestamps_by_run: dict[str, NDArray[np.int64]] = {}
+    motion_by_run_cam: dict[tuple[str, str], NDArray[np.float64]] = {}
+    stationary_by_run: dict[str, list[tuple[int, int]]] = {}
+
+    for run in cfg.runs:
+        timestamps_by_run[run] = timestamps.load_timestamps(
+            cfg.path("dataset_dir") / run / "cam0_20_yuv420p_output.hevc.timestamps.txt"
+        )
+        motions = []
+        for cam in cfg.cameras:
+            run_cameras.append(_run_camera_facts(cfg, run, cam, sha256_by_file))
+            store = _open_store(cfg, run, cam)
+            m = frames.motion_energy(
+                store, cfg.raw["frames"]["motion_thumb_w"], cfg.raw["frames"]["motion_thumb_h"]
+            )
+            motion_by_run_cam[(run, cam)] = m
+            motions.append(m)
+        n_common = min(m.size for m in motions)
+        stationary_by_run[run] = frames.stationary_segments(
+            motions[0][:n_common],
+            motions[1][:n_common],
+            cfg.raw["frames"]["stationary_threshold_frac"],
+            cfg.raw["frames"]["stationary_min_length"],
+        )
+
+    p = cfg.raw["policy"]
+    manifest = policy.build_manifest(
+        run_cameras,
+        timestamps_by_run,
+        motion_by_run_cam,
+        stationary_by_run,
+        mapping,
+        interval_irregular_lo_ms=p["interval_irregular_lo_ms"],
+        interval_irregular_hi_ms=p["interval_irregular_hi_ms"],
+        tail_zone_lines=p["tail_zone_lines"],
+        dedup_keep_hz=p["dedup_keep_hz"],
+        place_id_bucket_frames=p["place_id_bucket_frames"],
+        depot_runb_margin=p["depot_runb_margin"],
+        split_val_frac=p["split_val_frac"],
+        split_test_frac=p["split_test_frac"],
+        split_buffer_places=p["split_buffer_places"],
+    )
+
+    out_path = out_dir / "keep_manifest.csv"
+    manifest.to_csv(out_path, index=False)
+    n_keep = int(manifest["keep"].sum())
+    print(f"wrote {out_path} ({len(manifest)} rows)")
+    print(f"keep={n_keep} discard={len(manifest) - n_keep}")
+    print("split:")
+    for label, n in manifest["split"].value_counts().items():
+        print(f"  {label}: {n}")
+    return 0
+
+
+def _row(mapping: pd.DataFrame, runa_frame: int) -> pd.Series:
+    """Look up one `outputs/mapping_full.csv` row by `runA_frame`, for figure captions."""
+    return mapping.set_index("runA_frame").loc[runa_frame]
+
+
+def _fig_start_plateau(stores: dict[str, FrameStore], mapping: pd.DataFrame, out_dir: Path) -> None:
+    """Anchors 60/150: visually-similar depot frames collapse onto the same wrong runB match."""
+    r60 = _row(mapping, 60)
+    viz.plot_frame_comparison(
+        [
+            (stores["runA_cam0"].get_rgb(60), "runA #60 (query)"),
+            (stores["runA_cam0"].get_rgb(150), "runA #150 (query, same depot)"),
+            (
+                stores["runB_cam0"].get_rgb(81),
+                f"runB #81 -- pipeline's answer for both\nconf={r60['confidence']:.1f}, "
+                f"ridge_z={r60['ridge_z']:.2f} (WRONG)",
+            ),
+            (stores["runB_cam0"].get_rgb(100), "runB #100 -- ground truth [98,102]"),
+        ],
+        "Start-plateau ambiguity: two visually-similar depot queries, one wrong shared answer",
+        out_dir / "failure_start_plateau.png",
+    )
+
+
+def _fig_cam5_traffic(stores: dict[str, FrameStore], out_dir: Path) -> None:
+    """runB cam5 ~90-110: a passing car occludes cam5 only, not the kerb-facing cam0."""
+    viz.plot_frame_comparison(
+        [
+            (stores["runB_cam5"].get_rgb(85), "runB cam5 #85 (before)"),
+            (stores["runB_cam5"].get_rgb(93), "runB cam5 #93 (car passing)"),
+            (stores["runB_cam0"].get_rgb(93), "runB cam0 #93 (unaffected, kerb-facing)"),
+        ],
+        "cam5 passing-traffic occlusion: a transient absent from cam0's view of the same moment",
+        out_dir / "failure_cam5_traffic.png",
+    )
+
+
+def _fig_rain_attractor(
+    stores: dict[str, FrameStore], mapping: pd.DataFrame, out_dir: Path
+) -> None:
+    """runB #183: the low-contrast, rain-degraded scene SeqSLAM-alone late-fusion collapses onto
+    for anchors 60, 150 and 183. Shown against runA #183 itself so the mismatch is visible: the
+    query is a dry depot/carport frame, the attractor is an unrelated rainy gate scene -- the
+    shared frame number is a coincidence (runA_frame=183 vs runB column 183), not a causal link."""
+    r = _row(mapping, 183)
+    viz.plot_frame_comparison(
+        [
+            (stores["runA_cam0"].get_rgb(183), "runA #183 (query, ground truth runB [102,104])"),
+            (
+                stores["runB_cam0"].get_rgb(183),
+                f"runB cam0 #183 -- SeqSLAM-alone false attractor\n"
+                f"(shipped pipeline lands near #100 instead, ridge_z={r['ridge_z']:.2f})",
+            ),
+            (stores["runB_cam5"].get_rgb(183), "runB cam5 #183"),
+        ],
+        "Rain-degraded false attractor: SeqSLAM-alone late-fusion pulls anchors 60/150/183 here",
+        out_dir / "failure_rain_attractor.png",
+    )
+
+
+def _fig_loop_closure(stores: dict[str, FrameStore], mapping: pd.DataFrame, out_dir: Path) -> None:
+    """Anchor 2600: the depot revisited at loop closure -- genuinely ambiguous, correctly
+    abstained."""
+    r = _row(mapping, 2600)
+    caption_b = (
+        f"runB #2597 (near route end -- pipeline's\n"
+        f"raw candidate, ridge_z={r['ridge_z']:.2f} < tau, correctly abstained)"
+    )
+    viz.plot_frame_comparison(
+        [
+            (stores["runA_cam0"].get_rgb(2600), "runA #2600 (query, back at the depot)"),
+            (stores["runB_cam0"].get_rgb(10), "runB #10 (near route start -- plausible)"),
+            (stores["runB_cam0"].get_rgb(2597), caption_b),
+        ],
+        "Loop-closure ambiguity: the depot looks the same at both ends of the route",
+        out_dir / "failure_loop_closure.png",
+    )
+
+
+def _fig_low_texture(stores: dict[str, FrameStore], mapping: pd.DataFrame, out_dir: Path) -> None:
+    """runA 1659-1678: correct tracking (slope~1.0) but chronically weak margin_z -- a
+    low-discriminativeness stretch, not a single attractor spike."""
+    r = _row(mapping, 1660)
+    viz.plot_frame_comparison(
+        [
+            (stores["runA_cam0"].get_rgb(1660), "runA #1660 (query)"),
+            (
+                stores["runB_cam0"].get_rgb(1588),
+                f"runB #1588 -- matched, but\nmargin_z={r['margin_z']:.2f} (weak)",
+            ),
+            (stores["runB_cam0"].get_rgb(1598), "runB #1598 (+10 -- looks almost as good)"),
+        ],
+        "Low-texture stretch (runA 1659-1678): right track, chronically weak margin",
+        out_dir / "failure_low_texture.png",
+    )
+
+
+def _cmd_figures(cfg: Config) -> int:
+    """T2 failure-taxonomy figures: side-by-side runA/runB comparisons for the report's
+    failure-cases section, each grounded in a real instance, not a constructed example.
+
+    Args:
+        cfg: Loaded configuration.
+
+    Raises:
+        FileNotFoundError: If `outputs/mapping_full.csv` doesn't exist yet.
+
+    Returns:
+        0 on success.
+    """
+    out_dir = cfg.path("outputs_dir")
+    mapping_path = out_dir / "mapping_full.csv"
+    if not mapping_path.exists():
+        raise FileNotFoundError(f"{mapping_path} not found -- run `align` then `verify` first")
+    mapping = pd.read_csv(mapping_path)
+
+    stores = {f"{run}_{cam}": _open_store(cfg, run, cam) for run in cfg.runs for cam in cfg.cameras}
+    fig_dir = out_dir / "inspection" / "figures"
+
+    _fig_start_plateau(stores, mapping, fig_dir)
+    _fig_cam5_traffic(stores, fig_dir)
+    _fig_rain_attractor(stores, mapping, fig_dir)
+    _fig_loop_closure(stores, mapping, fig_dir)
+    _fig_low_texture(stores, mapping, fig_dir)
+
+    print(f"wrote 5 failure-taxonomy figures to {fig_dir}")
+    return 0
+
+
+def _cmd_report(cfg: Config) -> int:
+    """Build `report/report.pdf` from `report/report.tex` via `latexmk`.
+
+    Args:
+        cfg: Loaded configuration.
+
+    Raises:
+        FileNotFoundError: If `report/report.tex` doesn't exist.
+
+    Returns:
+        0 on success, 1 if `latexmk` fails (its stdout/stderr are passed through either way).
+    """
+    report_dir = cfg.path("report_dir")
+    tex_path = report_dir / "report.tex"
+    if not tex_path.exists():
+        raise FileNotFoundError(f"{tex_path} not found")
+    result = subprocess.run(
+        ["latexmk", "-pdf", "-interaction=nonstopmode", "-halt-on-error", "report.tex"],
+        cwd=report_dir,
+        capture_output=True,
+        text=True,
+    )
+    print(result.stdout)
+    if result.returncode != 0:
+        print(result.stderr, file=sys.stderr)
+        print(f"error: latexmk failed (exit {result.returncode})", file=sys.stderr)
+        return 1
+    print(f"wrote {report_dir / 'report.pdf'}")
     return 0
 
 
@@ -763,7 +1118,7 @@ def _not_implemented(name: str) -> int:
     Returns:
         1 (always an error).
     """
-    print(f"error: '{name}' is not implemented yet — see plan.md for its Step", file=sys.stderr)
+    print(f"error: '{name}' is not implemented yet", file=sys.stderr)
     return 1
 
 
@@ -783,7 +1138,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("decode")
     describe_p = sub.add_parser("describe")
     describe_p.add_argument("--feat", choices=["seqslam", "dinov2"], required=False)
-    for name in ("align", "verify", "gt-sheets", "evaluate", "manifest", "report"):
+    for name in ("align", "verify", "gt-sheets", "evaluate", "manifest", "figures", "report"):
         sub.add_parser(name)
     return p
 
@@ -816,6 +1171,14 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_verify(cfg)
     if args.command == "gt-sheets":
         return _cmd_gt_sheets(cfg)
+    if args.command == "evaluate":
+        return _cmd_evaluate(cfg)
+    if args.command == "manifest":
+        return _cmd_manifest(cfg)
+    if args.command == "figures":
+        return _cmd_figures(cfg)
+    if args.command == "report":
+        return _cmd_report(cfg)
     return _not_implemented(args.command)
 
 

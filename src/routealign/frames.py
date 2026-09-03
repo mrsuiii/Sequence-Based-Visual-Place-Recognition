@@ -1,5 +1,5 @@
 """FrameStore: read-through access to the JPEG cache, crops, LRU. Motion energy and stationarity
-detection. Step 2 (plan.md §4).
+detection.
 """
 
 from __future__ import annotations
@@ -130,9 +130,9 @@ def stationary_segments(
     """Find frame ranges where the vehicle is stationary.
 
     A frame is "low motion" when its value is below `threshold_frac` of that camera's own
-    median. A run counts as stationary only where *both* cameras agree (plan.md §4) -- a single
-    camera showing low motion can just mean a low-texture scene, not a stop -- and only if the
-    run is at least `min_length` frames long.
+    median. A run counts as stationary only where *both* cameras agree -- a single camera
+    showing low motion can just mean a low-texture scene, not a stop -- and only if the run is
+    at least `min_length` frames long.
 
     Args:
         motion_cam0: float64[N] motion energy for cam0, e.g. from `motion_energy`.

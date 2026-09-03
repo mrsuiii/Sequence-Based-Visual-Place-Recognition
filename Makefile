@@ -1,4 +1,4 @@
-.PHONY: verify-data characterise decode describe align verify gt-sheets evaluate manifest report lint test all
+.PHONY: verify-data characterise decode describe align verify gt-sheets evaluate manifest figures report lint test all
 
 PY := python -m routealign
 
@@ -29,6 +29,9 @@ evaluate:
 manifest:
 	$(PY) manifest
 
+figures:
+	$(PY) figures
+
 report:
 	$(PY) report
 
@@ -39,5 +42,5 @@ lint:
 test:
 	pytest -q
 
-all: verify-data decode characterise describe align verify gt-sheets evaluate manifest report
+all: verify-data decode characterise describe align verify gt-sheets evaluate manifest figures report
 	@echo "make all: done"

@@ -1,8 +1,8 @@
-"""Monotone alignment: DTW with open ends, path -> mapping. Step 4 (plan.md §6).
+"""Monotone alignment: DTW with open ends, path -> mapping.
 
-v1 (`dtw_open_ends`) is the committed default. v2 (`nullstate_dp`) is cut by default (see
-plan.md's revision note and config.yaml `align.nullstate_dp.enabled`) -- build it only in the
-day-2 buffer, and only after v1 is shipped, tested and understood.
+v1 (`dtw_open_ends`) is the committed default. v2 (`nullstate_dp`, config.yaml
+`align.nullstate_dp.enabled`) was scoped in but not built -- the shipped DTW-with-open-ends
+design already meets the accuracy bar without a gap-aware NULL state.
 """
 
 from __future__ import annotations
@@ -20,8 +20,8 @@ def _dtw_forward(cost: NDArray[np.float64], lam: float) -> NDArray[np.float64]:
     slower/stopped) and horizontal `D[i,j-1] + lam` (runB advances, runA holds). Row 0 starts at
     `cost[0]` everywhere (open begin: the path may start at any runB column, at no penalty for the
     columns before it). The horizontal term folds a same-row dependency into a single pass via a
-    cumulative-min identity rather than an explicit inner loop over `j` -- see decisions.md if this
-    needs re-deriving; `tests/test_align.py` checks it against a naive triple-loop line by line.
+    cumulative-min identity rather than an explicit inner loop over `j`; `tests/test_align.py`
+    checks it against a naive triple-loop line by line.
 
     Args:
         cost: float64[NA, NB] non-negative cost matrix.
@@ -90,8 +90,8 @@ def nullstate_dp(
     """NULL-state affine-gap alignment (v2): explicit match/skip states instead of a post-hoc
     no-match threshold.
 
-    Cut by default (plan.md §6 revision note) -- build only in the day-2 buffer, and only once v1
-    is shipped and understood.
+    Scoped in but not built -- the shipped v1 (`dtw_open_ends` + the post-hoc no-match rule)
+    already meets the accuracy bar without an explicit gap-aware NULL state.
 
     Args:
         cost: float64[NA, NB] non-negative cost matrix.
@@ -102,7 +102,7 @@ def nullstate_dp(
     Returns:
         int32[L, 2] path as (i, j) pairs.
     """
-    raise NotImplementedError("nullstate_dp: cut by default (plan.md §6); day-2 buffer only")
+    raise NotImplementedError("nullstate_dp: scoped in but not built -- see the module docstring")
 
 
 def path_to_mapping(

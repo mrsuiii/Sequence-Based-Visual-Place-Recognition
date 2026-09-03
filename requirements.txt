@@ -23,7 +23,8 @@ pytest
 ruff
 pyyaml
 
-# --- Deep descriptor (R2, DINOv2 via torch.hub) — committed default per plan.md §11, not optional.
+# --- Deep descriptor (R2, DINOv2 via torch.hub) — a committed part of the default pipeline,
+# fused with the classical descriptor (R1), not an optional extra.
 # open-clip-torch is not used; R2 loads DINOv2 through torch.hub directly.
 torch
 torchvision

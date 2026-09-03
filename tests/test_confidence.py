@@ -14,7 +14,7 @@ _BASE_ROW = {
     "desc_disagree": 0.0,
     "boundary_clamped": False,
     "ambiguous_range": False,
-    "no_video": False,
+    "no_frame": False,
 }
 
 
@@ -74,35 +74,35 @@ def test_fuse_confidence_default_tier_is_matched_but_weak() -> None:
 @pytest.mark.parametrize(
     "overrides",
     [
-        {"no_video": True},
+        {"no_frame": True},
         {"ridge_z": 0.5},  # below tau
         {"boundary_clamped": True, "ridge_z": 1.0},  # below boundary_ridge_min
         {"cam_disagree": 40.0, "desc_disagree": 40.0},  # both above disagree_no_match
     ],
 )
 def test_fuse_confidence_no_match_rule_fires(overrides: dict) -> None:
-    """Each independent no-match trigger from plan.md §7 must abstain the row: NaN confidence,
-    and status `no_video` for that specific case, `no_match` for the others -- with a non-empty
-    `reason` explaining which trigger fired."""
+    """Each independent no-match trigger must abstain the row: NaN confidence, and status
+    `no_frame` for that specific case, `no_match` for the others -- with a non-empty `reason`
+    explaining which trigger fired."""
     out = fuse_confidence(_cues(**overrides))
     assert np.isnan(out["confidence"].iloc[0])
-    expected_status = "no_video" if overrides.get("no_video") else "no_match"
+    expected_status = "no_frame" if overrides.get("no_frame") else "no_match"
     assert out["status"].iloc[0] == expected_status
     assert out["reason"].iloc[0] != ""
 
 
 def test_fuse_confidence_no_match_overrides_a_would_be_top_tier() -> None:
-    """A row that would otherwise qualify for tier 0.9 but has no video must still be abstained --
-    no-match takes priority over every tier rule."""
-    out = fuse_confidence(_cues(ridge_z=3.0, no_video=True))
+    """A row that would otherwise qualify for tier 0.9 but has no decoded frame must still be
+    abstained -- no-match takes priority over every tier rule."""
+    out = fuse_confidence(_cues(ridge_z=3.0, no_frame=True))
     assert np.isnan(out["confidence"].iloc[0])
-    assert out["status"].iloc[0] == "no_video"
-    assert out["reason"].iloc[0] == "no video for this row"
+    assert out["status"].iloc[0] == "no_frame"
+    assert out["reason"].iloc[0] == "no decoded frame for this row"
 
 
-def test_fuse_confidence_reason_priority_prefers_no_video_over_weak_ridge() -> None:
+def test_fuse_confidence_reason_priority_prefers_no_frame_over_weak_ridge() -> None:
     """When multiple no-match triggers hold at once, `reason` reports the earliest in the
-    documented priority order (no_video > weak ridge > clamped boundary > mutual disagreement),
+    documented priority order (no_frame > weak ridge > clamped boundary > mutual disagreement),
     matching `no_match`'s own precedence."""
-    out = fuse_confidence(_cues(ridge_z=0.1, no_video=True))  # both no_video and weak-ridge fire
-    assert out["reason"].iloc[0] == "no video for this row"
+    out = fuse_confidence(_cues(ridge_z=0.1, no_frame=True))  # both no_frame and weak-ridge fire
+    assert out["reason"].iloc[0] == "no decoded frame for this row"

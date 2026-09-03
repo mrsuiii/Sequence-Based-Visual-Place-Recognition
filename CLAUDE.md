@@ -100,8 +100,9 @@ No module imports upward; no circular imports; a module that starts doing two th
 
 - **Index convention (H0, head-aligned):** frame index `k` = line `k` of the run's timestamp file = decoded
   display-order frame `k` of each camera. Both cameras of a run share one timestamp file (byte-identical).
-  Video frames exist only for `k < decoded_count(run, cam)`; the remaining timestamp lines are `no_video`.
-  H0 is a documented assumption with evidence (see `findings.md`), not a fact — keep it labelled as such.
+  Video frames exist only for `k < decoded_count(run, cam)`; the remaining timestamp lines are `no_frame`.
+  H0 is a documented assumption with evidence, not a fact — keep it labelled as such, with the evidence
+  stated inline wherever H0 is invoked (code comments, the report), not by pointing to `findings.md`.
 - **Declared vs measured:** every number carries its provenance. Declared = filename token `_20_`, SPS/VUI
   (`10/1`), ffprobe defaults (`avg_frame_rate 25/1`, `color_range tv`), the timestamp files. Measured = full
   decode counts, NAL parse, timestamp arithmetic, image content. Never report a default as a fact.
@@ -141,8 +142,13 @@ the first run: `pytest`, `ruff`, `pyyaml`, and `torch` (macOS arm64 wheel) for t
   in that session. Propose the exact command, then wait. Anything expected to take > 10 minutes gets a heads-up.
 - Keep `plan.md` checkboxes, `findings.md` and `decisions.md` current as work progresses; a number without its
   provenance is not finished.
-- Ship nothing the user cannot explain: non-obvious choices get a `# why:` comment and an entry in `decisions.md`
-  with the alternatives that were considered.
+- Ship nothing the user cannot explain: non-obvious choices get a self-contained `# why:` comment (the
+  reasoning itself, inline) and a `decisions.md` entry (the alternatives considered) for the internal record.
+- `plan.md`, `findings.md` and `decisions.md` are working notes for this session and the candidate only, not
+  part of the deliverable — nothing in `src/`, `tests/`, `config.yaml`, `README.md` or `report/` may cite them
+  by name (`# why: plan.md §7`, `(see findings.md)`, `(decisions.md D9)`, etc.). State the actual reasoning or
+  evidence inline instead; if it doesn't fit inline, that is a sign the comment or report section needs to say
+  more, not a reason to point elsewhere.
 - Definition of done: `outputs/mapping.csv` (2695 runA rows, schema test green), `report/report.pdf`
   (2–4 pages), README reproduction, `make lint test` green, `make all` from a clean cache, findings/decisions
   current, submission archive built.

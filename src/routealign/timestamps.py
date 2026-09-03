@@ -1,9 +1,10 @@
 """Pure functions on the int64-nanosecond timestamp arrays. No file I/O beyond reading the text
-file, no video. Step 1 (plan.md §3).
+file, no video.
 """
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 
 import numpy as np
@@ -70,6 +71,18 @@ def interval_stats(ts: NDArray[np.int64]) -> dict:
         "gaps_over_150ms": gaps,
         "lag1_autocorr": lag1,
     }
+
+
+def ns_to_iso(ns: int) -> str:
+    """Format an int64-nanosecond epoch timestamp as an ISO-8601 UTC string.
+
+    Args:
+        ns: Nanoseconds since the Unix epoch.
+
+    Returns:
+        ISO-8601 string, e.g. `"2025-02-28T06:24:09.580000+00:00"`.
+    """
+    return datetime.fromtimestamp(ns / 1e9, tz=UTC).isoformat()
 
 
 def frame_times(ts: NDArray[np.int64], decoded_count: int) -> NDArray[np.int64]:

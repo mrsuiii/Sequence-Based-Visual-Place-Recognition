@@ -1,6 +1,6 @@
 # Task 1 — characterisation summary
 
-`declared fps` below is the one label that traces to a real field about *this file's* content: the SPS/VUI `time_scale/num_units_in_tick`, independently confirmed against ffprobe's `r_frame_rate` (the two agree exactly). Two other candidate labels were found, investigated and rejected rather than silently omitted — see "Other frame-rate labels" below and `findings.md`. `declared fps` is still not the actual rate; see `measured fps`, computed from `timestamps.txt` interval arithmetic. Full provenance for every figure is in the per-camera JSON files next to this table and in `findings.md`.
+`declared fps` below is the one label that traces to a real field about *this file's* content: the SPS/VUI `time_scale/num_units_in_tick`, independently confirmed against ffprobe's `r_frame_rate` (the two agree exactly). Two other candidate labels were found, investigated and rejected rather than silently omitted — see "Other frame-rate labels" below. `declared fps` is still not the actual rate; see `measured fps`, computed from `timestamps.txt` interval arithmetic. Full provenance for every figure is in the per-camera JSON files next to this table.
 
 | run/cam | frames (decoded / lines) | resolution | file size | declared fps (nominal) | measured fps | route time (s) | recorded (UTC) |
 |---|---|---|---|---|---|---|---|
@@ -14,7 +14,7 @@
 | label | value | why it is not reported as the declared fps |
 |---|---|---|
 | filename token | 20 | unexplained -- no field anywhere in the file confirms this represents fps; listed only because of its position in the filename, not because its meaning is known |
-| ffprobe avg_frame_rate | 25/1 | proven generic fallback for headerless elementary streams: a synthetic test file encoded at a known true 17 fps still reports avg_frame_rate=25/1, identical to this file -- see findings.md |
+| ffprobe avg_frame_rate | 25/1 | proven generic fallback for headerless elementary streams: a synthetic test file encoded at a known true 17 fps still reports avg_frame_rate=25/1, identical to this file |
 
 ## Frame-count discrepancy (timestamp lines minus decoded frames)
 

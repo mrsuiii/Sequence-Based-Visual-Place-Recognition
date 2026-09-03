@@ -1,4 +1,4 @@
-runA_frame,runB_frame,lo,hi,boundary_clamped,ridge_z,margin_z,cam_disagree,desc_disagree,slope,argmax_disagree,sift_inliers,ambiguity,ambiguous_range,no_video,confidence,status,reason,runA_has_cam0,runA_has_cam5,runB_has_cam0,runB_has_cam5,method,runA_time_utc,runB_time_utc
+runA_frame,runB_frame,lo,hi,boundary_clamped,ridge_z,margin_z,cam_disagree,desc_disagree,slope,argmax_disagree,sift_inliers,ambiguity,ambiguous_range,no_frame,confidence,status,reason,runA_has_cam0,runA_has_cam5,runB_has_cam0,runB_has_cam5,method,runA_time_utc,runB_time_utc
 0,70.0,70.0,70.0,False,0.710699990105645,-1.1499189657147275,12.0,123.0,1.0,585.0,,0.0,False,False,,no_match,ridge_z below tau (0.75),True,True,True,True,seqslam+dinov2,2025-02-28T06:24:09.579560+00:00,2024-04-13T09:12:49.284054+00:00
 1,71.0,71.0,71.0,False,0.7041795463218199,-1.1456744761936233,12.0,123.0,1.0,584.0,,0.0,False,False,,no_match,ridge_z below tau (0.75),True,True,True,True,seqslam+dinov2,2025-02-28T06:24:09.679609+00:00,2024-04-13T09:12:49.380272+00:00
 2,72.0,72.0,72.0,False,0.7360797084627655,-0.9946668837918782,12.0,123.0,0.967032967032967,583.0,,0.0,False,False,,no_match,ridge_z below tau (0.75),True,True,True,True,seqslam+dinov2,2025-02-28T06:24:09.779504+00:00,2024-04-13T09:12:49.483236+00:00
@@ -2673,24 +2673,24 @@ runA_frame,runB_frame,lo,hi,boundary_clamped,ridge_z,margin_z,cam_disagree,desc_
 2671,2612.0,2612.0,2612.0,False,0.4053631600639954,-1.0098961817289085,13.0,13.0,1.0,1957.0,,0.0,False,False,,no_match,ridge_z below tau (0.75),True,True,True,True,seqslam+dinov2,2025-02-28T06:28:36.878996+00:00,2024-04-13T09:17:03.478865+00:00
 2672,2613.0,2613.0,2613.0,False,0.38939782205170465,-1.2714310588370064,14.0,12.0,1.0,1958.0,,0.0,False,False,,no_match,ridge_z below tau (0.75),True,True,True,True,seqslam+dinov2,2025-02-28T06:28:36.978862+00:00,2024-04-13T09:17:03.579899+00:00
 2673,2614.0,2614.0,2614.0,False,0.3974642034843571,-0.913036517693315,15.0,11.0,1.0,1959.0,,0.0,False,False,,no_match,ridge_z below tau (0.75),True,True,True,True,seqslam+dinov2,2025-02-28T06:28:37.080467+00:00,2024-04-13T09:17:03.677971+00:00
-2674,,,,False,,,,,,,,,,,,no_video,no video for this row,False,False,False,False,seqslam+dinov2,2025-02-28T06:28:37.180401+00:00,
-2675,,,,False,,,,,,,,,,,,no_video,no video for this row,False,False,False,False,seqslam+dinov2,2025-02-28T06:28:37.274451+00:00,
-2676,,,,False,,,,,,,,,,,,no_video,no video for this row,False,False,False,False,seqslam+dinov2,2025-02-28T06:28:37.377840+00:00,
-2677,,,,False,,,,,,,,,,,,no_video,no video for this row,False,False,False,False,seqslam+dinov2,2025-02-28T06:28:37.474599+00:00,
-2678,,,,False,,,,,,,,,,,,no_video,no video for this row,False,False,False,False,seqslam+dinov2,2025-02-28T06:28:37.579350+00:00,
-2679,,,,False,,,,,,,,,,,,no_video,no video for this row,False,False,False,False,seqslam+dinov2,2025-02-28T06:28:37.674637+00:00,
-2680,,,,False,,,,,,,,,,,,no_video,no video for this row,False,False,False,False,seqslam+dinov2,2025-02-28T06:28:37.779389+00:00,
-2681,,,,False,,,,,,,,,,,,no_video,no video for this row,False,False,False,False,seqslam+dinov2,2025-02-28T06:28:37.874424+00:00,
-2682,,,,False,,,,,,,,,,,,no_video,no video for this row,False,False,False,False,seqslam+dinov2,2025-02-28T06:28:37.974320+00:00,
-2683,,,,False,,,,,,,,,,,,no_video,no video for this row,False,False,False,False,seqslam+dinov2,2025-02-28T06:28:38.074182+00:00,
-2684,,,,False,,,,,,,,,,,,no_video,no video for this row,False,False,False,False,seqslam+dinov2,2025-02-28T06:28:38.175245+00:00,
-2685,,,,False,,,,,,,,,,,,no_video,no video for this row,False,False,False,False,seqslam+dinov2,2025-02-28T06:28:38.274999+00:00,
-2686,,,,False,,,,,,,,,,,,no_video,no video for this row,False,False,False,False,seqslam+dinov2,2025-02-28T06:28:38.374723+00:00,
-2687,,,,False,,,,,,,,,,,,no_video,no video for this row,False,False,False,False,seqslam+dinov2,2025-02-28T06:28:38.474424+00:00,
-2688,,,,False,,,,,,,,,,,,no_video,no video for this row,False,False,False,False,seqslam+dinov2,2025-02-28T06:28:38.574581+00:00,
-2689,,,,False,,,,,,,,,,,,no_video,no video for this row,False,False,False,False,seqslam+dinov2,2025-02-28T06:28:38.678056+00:00,
-2690,,,,False,,,,,,,,,,,,no_video,no video for this row,False,False,False,False,seqslam+dinov2,2025-02-28T06:28:38.773946+00:00,
-2691,,,,False,,,,,,,,,,,,no_video,no video for this row,False,False,False,False,seqslam+dinov2,2025-02-28T06:28:38.874032+00:00,
-2692,,,,False,,,,,,,,,,,,no_video,no video for this row,False,False,False,False,seqslam+dinov2,2025-02-28T06:28:38.974643+00:00,
-2693,,,,False,,,,,,,,,,,,no_video,no video for this row,False,False,False,False,seqslam+dinov2,2025-02-28T06:28:39.074551+00:00,
-2694,,,,False,,,,,,,,,,,,no_video,no video for this row,False,False,False,False,seqslam+dinov2,2025-02-28T06:28:39.174062+00:00,
+2674,,,,False,,,,,,,,,,,,no_frame,no decoded frame for this row,False,False,False,False,seqslam+dinov2,2025-02-28T06:28:37.180401+00:00,
+2675,,,,False,,,,,,,,,,,,no_frame,no decoded frame for this row,False,False,False,False,seqslam+dinov2,2025-02-28T06:28:37.274451+00:00,
+2676,,,,False,,,,,,,,,,,,no_frame,no decoded frame for this row,False,False,False,False,seqslam+dinov2,2025-02-28T06:28:37.377840+00:00,
+2677,,,,False,,,,,,,,,,,,no_frame,no decoded frame for this row,False,False,False,False,seqslam+dinov2,2025-02-28T06:28:37.474599+00:00,
+2678,,,,False,,,,,,,,,,,,no_frame,no decoded frame for this row,False,False,False,False,seqslam+dinov2,2025-02-28T06:28:37.579350+00:00,
+2679,,,,False,,,,,,,,,,,,no_frame,no decoded frame for this row,False,False,False,False,seqslam+dinov2,2025-02-28T06:28:37.674637+00:00,
+2680,,,,False,,,,,,,,,,,,no_frame,no decoded frame for this row,False,False,False,False,seqslam+dinov2,2025-02-28T06:28:37.779389+00:00,
+2681,,,,False,,,,,,,,,,,,no_frame,no decoded frame for this row,False,False,False,False,seqslam+dinov2,2025-02-28T06:28:37.874424+00:00,
+2682,,,,False,,,,,,,,,,,,no_frame,no decoded frame for this row,False,False,False,False,seqslam+dinov2,2025-02-28T06:28:37.974320+00:00,
+2683,,,,False,,,,,,,,,,,,no_frame,no decoded frame for this row,False,False,False,False,seqslam+dinov2,2025-02-28T06:28:38.074182+00:00,
+2684,,,,False,,,,,,,,,,,,no_frame,no decoded frame for this row,False,False,False,False,seqslam+dinov2,2025-02-28T06:28:38.175245+00:00,
+2685,,,,False,,,,,,,,,,,,no_frame,no decoded frame for this row,False,False,False,False,seqslam+dinov2,2025-02-28T06:28:38.274999+00:00,
+2686,,,,False,,,,,,,,,,,,no_frame,no decoded frame for this row,False,False,False,False,seqslam+dinov2,2025-02-28T06:28:38.374723+00:00,
+2687,,,,False,,,,,,,,,,,,no_frame,no decoded frame for this row,False,False,False,False,seqslam+dinov2,2025-02-28T06:28:38.474424+00:00,
+2688,,,,False,,,,,,,,,,,,no_frame,no decoded frame for this row,False,False,False,False,seqslam+dinov2,2025-02-28T06:28:38.574581+00:00,
+2689,,,,False,,,,,,,,,,,,no_frame,no decoded frame for this row,False,False,False,False,seqslam+dinov2,2025-02-28T06:28:38.678056+00:00,
+2690,,,,False,,,,,,,,,,,,no_frame,no decoded frame for this row,False,False,False,False,seqslam+dinov2,2025-02-28T06:28:38.773946+00:00,
+2691,,,,False,,,,,,,,,,,,no_frame,no decoded frame for this row,False,False,False,False,seqslam+dinov2,2025-02-28T06:28:38.874032+00:00,
+2692,,,,False,,,,,,,,,,,,no_frame,no decoded frame for this row,False,False,False,False,seqslam+dinov2,2025-02-28T06:28:38.974643+00:00,
+2693,,,,False,,,,,,,,,,,,no_frame,no decoded frame for this row,False,False,False,False,seqslam+dinov2,2025-02-28T06:28:39.074551+00:00,
+2694,,,,False,,,,,,,,,,,,no_frame,no decoded frame for this row,False,False,False,False,seqslam+dinov2,2025-02-28T06:28:39.174062+00:00,

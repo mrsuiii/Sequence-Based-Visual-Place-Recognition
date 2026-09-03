@@ -68,7 +68,7 @@ user which previously-cut/deferred items they want back in scope given the extra
   descriptor used in the pipeline itself). User's label is authoritative; Claude's flags get re-checked, not
   averaged in. See §13.
 - Index convention **H0**: frame `k` = timestamp line `k` = decoded frame `k` of each camera (evidence in §1);
-  `mapping.csv` has one row per runA timestamp line (2695), `status=no_video` for lines without a decoded frame.
+  `mapping.csv` has one row per runA timestamp line (2695), `status=no_frame` for lines without a decoded frame.
 
 ## 1. What is already established (read-only survey, 2026-08-30; re-verify inside the pipeline and cite in findings.md)
 
@@ -338,7 +338,7 @@ Independent evidence per runA row (all become columns of `outputs/mapping_full.c
       validation, each tier, the SIFT-recovers-a-vote case, each no-match trigger independently, and no-match
       overriding an otherwise-top-tier row.
 - [x] `outputs/mapping.csv` columns: `runA_frame, runB_frame, confidence, runB_frame_lo, runB_frame_hi,
-      status{matched, ambiguous_range, no_match, no_video}, reason, runA_time_utc, runB_time_utc, ridge_z,
+      status{matched, ambiguous_range, no_match, no_frame}, reason, runA_time_utc, runB_time_utc, ridge_z,
       margin_z, cam_disagree, desc_disagree, sift_inliers, slope, runA_has_cam0, runA_has_cam5, runB_has_cam0,
       runB_has_cam5, method`. Schema documented in `outputs/SCHEMA.md` and enforced by `tests/test_mapping_csv.py`.
       Wired up via new `describe`/`align`/`verify` CLI subcommands (`cli.py`) + `descriptors.cached`
@@ -387,9 +387,11 @@ Independent evidence per runA row (all become columns of `outputs/mapping_full.c
       end (`gt/anchors_user.csv`), so there is no second-labeller agreement number to report — noted as absent
       per this bullet's own fallback clause, not silently skipped. `load_labels` still reads
       `anchors_claude.csv` too if one is ever added.
-- [ ] Split: 6 dev anchors (threshold sanity only), ~24 test anchors reported with Wilson 95 % CIs
-      (e.g. 22/24 → [74 %, 98 %]). Not yet applied — `evaluate` scores all 22 stratum-S anchors together for now;
-      the dev/test split is a follow-up once labels are final (only matters once thresholds need calibrating).
+- [x] ~~Split: 6 dev anchors (threshold sanity only), ~24 test anchors reported with Wilson 95 % CIs~~
+      **Cut, user decision (2026-09-01)**: not worth the sample-size cost at only 22 stratum-S anchors -- splitting
+      further would leave too few of either to say anything with a usable CI. `evaluate` continues to score all 22
+      together (findings.md); the honest sample-size caveat is carried in the report's ledger instead of a formal
+      split.
 - [x] Metrics: error = 0 if the prediction lies in `[lo, hi]`, else distance to the nearest end; hit@2/5/10 frames
       (and seconds via timestamps); median and p90 error; per stratum (plateau / mid-route / tail); per confidence
       tier (reliability table); no-match precision/recall from the **deletion test** (delete runB [j0, j0+150),
@@ -406,6 +408,14 @@ Independent evidence per runA row (all become columns of `outputs/mapping_full.c
       (n=7), 0.9 → 100% (n=8) — the earlier (unverified-label) run's inverted pattern is now resolved in the
       expected direction, confirming that inversion was correctly attributed to label noise, not a real
       calibration problem (findings.md). Per-stratum breakdown and seconds-via-timestamps still not added.
+      **`evaluate` CLI subcommand wired up** (was a documented `make evaluate` target with no implementation
+      until now): writes `outputs/evaluation_anchors.csv` (real prediction-vs-ground-truth side by side, one
+      row per **every labelled anchor, all 22** — not just the 19 scored ones; `pipeline_`/`gt_`-prefixed
+      columns, a nullable-boolean `correct`, and an `abstain_outcome` category for the 3 rows a position error
+      can't be computed for, so an abstained anchor is a labelled, visible row, not a silently dropped one —
+      findings.md's "silently dropping 3 anchors" entry, 2026-09-01) and `outputs/evaluation_summary.json` —
+      these numbers are now a persisted, regeneratable artifact, not only ever terminal output or findings.md
+      prose. Run for real, reproduces the numbers above exactly.
 - [x] Ablation on the same anchors: argmax-only vs DTW; cam0 / cam5 / both; SeqSLAM / DINOv2 / both;
       with / without local contrast normalisation. Run against the final verified anchors (findings.md, full
       table): argmax-only p90=556.3 vs DTW p90=3.5 (the corner-aliasing diagnostic's quantitative proof); cam5-only
@@ -419,8 +429,16 @@ Independent evidence per runA row (all become columns of `outputs/mapping_full.c
       keeping `cam_disagree`/`desc_disagree` computable, which full early fusion would preclude. With/without
       local contrast normalisation covered in substance by D9/D10 (DINOv2 collapses without a wide-enough window)
       rather than re-run as a separate raw-cosine row.
-- [ ] Failure taxonomy with side-by-side figures: start plateau (many-to-one onto moving runB), runA tail beyond
-      runB's truncated end, low-texture block, cam5 passing traffic, rain-degraded stretch, loop-closure corners.
+- [x] Failure taxonomy with side-by-side figures (2026-09-01): 5 of the 6 planned cases, each grounded in a
+      real, already-verified finding rather than a staged example -- `outputs/inspection/figures/failure_*.png`,
+      via a new `viz.plot_frame_comparison` + `cli.py`'s `figures` subcommand. **Dropped**: "runA tail beyond
+      runB's truncated end" -- checked for real (`boundary_clamped` count in `mapping_full.csv`) and found **zero**
+      rows, so there is no real instance to show; the shipped pipeline's route coverage happens to reach both open
+      ends (findings.md's `path_to_mapping` entry already recorded this). See findings.md for the full account,
+      including two real corrections made from looking at the actual rendered images: the cam5-traffic frame
+      (index 95) needed retargeting to the real motion_energy peak (93) after the first pick showed no visible
+      car, and every panel needed a gamma correction (dashcam footage under overcast/rain/tree-shade runs too dark
+      to read at native brightness, especially the low-texture case).
 
 ## 9. Step 7 — Task 3 policy (1:00) → `outputs/keep_manifest.csv`, `outputs/SCHEMA.md`, dataset-card section
 
@@ -451,6 +469,22 @@ split:{train, val, test, unassigned}, keep:bool, reject_reason:str|null`. Export
 `{run}_{cam}_{frame:05d}_{t_utc_ns}.png` so the timestamp travels with the pixels; ship CSV + JSON schema + a
 dataset card stating nominal-vs-measured fps, the H0 assumption and the split rule.
 
+**Status (2026-09-01): implemented and run for real.** `policy.build_manifest`, all 8 rules, wired
+into a new `manifest` CLI subcommand; 21 tests (`tests/test_policy.py`), 107/107 green project-wide.
+Real run: `outputs/keep_manifest.csv`, 10716 rows, `keep=10585 discard=131` (131 exactly reproduces
+the independently-known `no_frame` gap -- a real cross-check, not just a plausible-looking number),
+`split` train=6814/val=1566/test=1358/unassigned=978. Only rule 1 is a hard discard; rules 2-7 are
+flags a downstream consumer filters on explicitly, by design (decisions.md D12, which also records
+four scoped simplifications: `corr_status="not_applicable"` for runB rows, per-camera-constant
+`lens_occlusion`/`weather`/`lighting` rather than a per-frame detector, a fixed `depot_runb_margin`
+rather than each run's own asymmetric stationary segments, and a simple contiguous 70/15/15 `split`
+rather than a stratified one). Rule 1's other two sub-cases (corrupt decode, exact duplicates)
+checked for real, not left an open question: re-decoded all 4 streams at `-v warning` (stricter
+than production) and found zero warnings; `motion_energy` was exactly 0.0 for zero
+consecutive-frame pairs across the whole dataset -- `keep=decode_ok` is complete for this dataset,
+nothing more to add (findings.md, decisions.md D12). Not yet done: report §3 (dataset card), the
+frame-export step (`{run}_{cam}_{frame:05d}_{t_utc_ns}.png`).
+
 ## 10. Step 8 — Tests, report, submission (1:00 + 3:00 + 1:00)
 
 - [ ] Tests (< 60 s, synthetic fixtures): `test_timestamps` (10 Hz grid + jitter + one 300 ms gap → gap index and
@@ -461,13 +495,20 @@ dataset card stating nominal-vs-measured fps, the H0 assumption and the split ru
       and equality with DTW when gap-free; `path_to_mapping` complete, monotone, lo ≤ best ≤ hi), `test_io`
       (20 frames of `lavfi testsrc` encoded with libx265 to a raw `.hevc` → `count_decoded` = 20, NAL pictures = 20,
       `sps_vui` parses `time_scale`), `test_mapping_csv` (schema: every runA frame once, confidence ∈ [0, 1], empty
-      `runB_frame` iff status ∈ {no_match, no_video}, monotone over matched rows), `test_cli_smoke`
+      `runB_frame` iff status ∈ {no_match, no_frame}, monotone over matched rows), `test_cli_smoke`
       (`all --limit 60` on real data if present, else skip).
-- [ ] Report (LaTeX via the `latex-document-skill`, 4 pages): T1 table + Δt figure (1 p); T2 method, alternatives,
-      results, ablation, reliability table, failure cases (2 p); T3 (0.5 p); reproducibility + proved-vs-assumed
-      ledger (0.5 p). Figures: Δt histograms; similarity matrix with the final path, rejected spans and the corner
-      aliasing; anchor error plot coloured by tier; 2–3 failure-case thumbnails.
-- [ ] README: `make all` from a clean cache with timings, `ffmpeg -version`, pinned versions, the H0 statement.
+- [~] Report draft written (2026-09-01): §2 (method, alternatives, results, reliability table, ablation, ground
+      truth, failure cases), §3 (T3 policy), §4 (reproducibility + proved-vs-assumed ledger) -- all real numbers,
+      no placeholders left. `report` CLI subcommand now actually builds it (`latexmk -pdf`, was `_not_implemented`).
+      **5 pages, 1 over the 2-4 budget** -- pages 1-4 are fully packed (fixed a real bug along the way: `[H]`
+      forced float placement was leaving large blank gaps AND, separately, letting two floats drift to the wrong
+      page position entirely -- the T1 table above the title, the ledger table above its own section -- both
+      fixed). Getting to exactly 4 needs a real content cut, not just formatting; flagged to the user rather than
+      cut unilaterally. Figures used: Δt plot, both similarity-matrix diagnostics, the 5-panel failure-taxonomy
+      grid (all reused from earlier steps, none regenerated for the report itself).
+- [x] README (2026-09-01): environment (measured package versions, not just requirements.txt's bare names),
+      a mermaid pipeline diagram (stage-by-stage, the one manual labelling step visually distinguished), full
+      reproduction commands, the H0 statement, tests/lint.
 - [ ] Final: `make lint test`, `make all` twice (byte-identical CSVs), archive `code + outputs + report.pdf`.
 
 ## 11. Candidate solutions and the recommendation

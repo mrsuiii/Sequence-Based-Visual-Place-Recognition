@@ -37,7 +37,7 @@
       },
       "ffprobe_avg_frame_rate": {
         "value": "25/1",
-        "reason_rejected": "proven generic fallback for headerless elementary streams: a synthetic test file encoded at a known true 17 fps still reports avg_frame_rate=25/1, identical to this file -- see findings.md"
+        "reason_rejected": "proven generic fallback for headerless elementary streams: a synthetic test file encoded at a known true 17 fps still reports avg_frame_rate=25/1, identical to this file"
       }
     }
   },

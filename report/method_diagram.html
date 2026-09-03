@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Correspondence Blueprint</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+  :root{
+    --bg:#f4f6f9;
+    --surface:#ffffff;
+    --surface-2:#eef1f6;
+    --border:#dde2ea;
+    --ink:#161b22;
+    --ink-muted:#5b6472;
+    --ink-faint:#8891a0;
+    --accent:#0e7490;
+    --accent-ink:#075267;
+    --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+    --sans: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+
+    --bp-bg:#0b1730;
+    --bp-bg-2:#0d1c3c;
+    --bp-grid:#16294e;
+    --bp-line:#8fd7f4;
+    --bp-text:#eaf3fb;
+    --bp-text-dim:#a9c3db;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#0b0f16;
+      --surface:#121824;
+      --surface-2:#0e1420;
+      --border:#232d3d;
+      --ink:#e7ebf2;
+      --ink-muted:#9aa5b5;
+      --ink-faint:#6b7688;
+      --accent:#22b8d8;
+      --accent-ink:#8fe3f5;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#0b0f16;
+    --surface:#121824;
+    --surface-2:#0e1420;
+    --border:#232d3d;
+    --ink:#e7ebf2;
+    --ink-muted:#9aa5b5;
+    --ink-faint:#6b7688;
+    --accent:#22b8d8;
+    --accent-ink:#8fe3f5;
+  }
+
+  *{box-sizing:border-box;}
+  body{
+    background:var(--bg);
+    color:var(--ink);
+    font-family:var(--sans);
+    line-height:1.55;
+    padding:0 0 5rem;
+  }
+  .wrap{
+    max-width:1180px;
+    margin:0 auto;
+    padding:3.2rem 2rem 0;
+  }
+
+  /* ---------- header ---------- */
+  .eyebrow{
+    font-family:var(--mono);
+    font-size:.72rem;
+    letter-spacing:.14em;
+    text-transform:uppercase;
+    color:var(--accent-ink);
+    display:flex;
+    align-items:center;
+    gap:.6rem;
+    margin-bottom:.9rem;
+  }
+  .eyebrow::before{
+    content:"";
+    width:1.6rem;
+    height:1px;
+    background:var(--accent);
+    display:inline-block;
+  }
+  h1{
+    font-family:var(--mono);
+    font-weight:600;
+    font-size:clamp(1.6rem, 2.6vw, 2.15rem);
+    letter-spacing:-.01em;
+    text-wrap:balance;
+    margin:0 0 .55rem;
+  }
+  .dek{
+    max-width:62ch;
+    color:var(--ink-muted);
+    font-size:1rem;
+    margin:0 0 1.8rem;
+  }
+  .dek code{ font-family:var(--mono); font-size:.92em; background:var(--surface-2); padding:.05em .35em; border-radius:3px; }
+
+  /* ---------- legend ---------- */
+  .legend{
+    display:flex;
+    flex-wrap:wrap;
+    gap:.5rem .7rem;
+    padding:1rem 1.1rem;
+    background:var(--surface);
+    border:1px solid var(--border);
+    border-radius:10px;
+    margin-bottom:2rem;
+  }
+  .legend-item{
+    display:flex;
+    align-items:center;
+    gap:.5rem;
+    font-family:var(--mono);
+    font-size:.76rem;
+    color:var(--ink-muted);
+    white-space:nowrap;
+  }
+  .swatch{
+    width:.62rem; height:.62rem;
+    border-radius:2px;
+    flex:none;
+    box-shadow: inset 0 0 0 1px rgba(0,0,0,.15);
+  }
+  .legend-sep{
+    width:1px;
+    align-self:stretch;
+    background:var(--border);
+    margin:0 .1rem;
+  }
+
+  /* ---------- blueprint panel ---------- */
+  .panel{
+    position:relative;
+    background:
+      radial-gradient(circle at 18% 12%, rgba(143,215,244,.05), transparent 55%),
+      repeating-linear-gradient(0deg, var(--bp-grid) 0 1px, transparent 1px 28px),
+      repeating-linear-gradient(90deg, var(--bp-grid) 0 1px, transparent 1px 28px),
+      var(--bp-bg);
+    border-radius:14px;
+    padding:1.6rem 1.4rem 1.9rem;
+    overflow:hidden;
+  }
+  .panel::before, .panel::after,
+  .panel .corner-tl, .panel .corner-br{
+    content:"";
+    position:absolute;
+    width:22px; height:22px;
+    border:1.5px solid var(--bp-line);
+    opacity:.55;
+  }
+  .panel::before{ top:14px; left:14px; border-right:none; border-bottom:none; }
+  .panel::after{ bottom:14px; right:14px; border-left:none; border-top:none; }
+  .panel .corner-tl{ top:14px; right:14px; border-left:none; border-bottom:none; }
+  .panel .corner-br{ bottom:14px; left:14px; border-right:none; border-top:none; }
+
+  .panel-head{
+    display:flex;
+    justify-content:space-between;
+    align-items:baseline;
+    font-family:var(--mono);
+    color:var(--bp-text-dim);
+    font-size:.72rem;
+    letter-spacing:.08em;
+    text-transform:uppercase;
+    padding:0 1.4rem 1.1rem;
+  }
+  .panel-head span:last-child{ color:#5c7896; }
+
+  .diagram-scroll{
+    overflow-x:auto;
+    padding:.2rem 1.4rem .4rem;
+  }
+  .diagram-scroll svg{ min-width:1520px; display:block; }
+
+  /* ---------- reference section ---------- */
+  h2{
+    font-family:var(--mono);
+    font-weight:600;
+    font-size:1.05rem;
+    margin:3rem 0 .3rem;
+  }
+  .section-note{
+    color:var(--ink-muted);
+    max-width:70ch;
+    margin:0 0 1.4rem;
+    font-size:.95rem;
+  }
+
+  .cue-grid{
+    display:grid;
+    grid-template-columns:repeat(auto-fit, minmax(250px,1fr));
+    gap:1px;
+    background:var(--border);
+    border:1px solid var(--border);
+    border-radius:10px;
+    overflow:hidden;
+    margin-bottom:2.2rem;
+  }
+  .cue{
+    background:var(--surface);
+    padding:1.1rem 1.2rem;
+  }
+  .cue-name{
+    font-family:var(--mono);
+    font-size:.86rem;
+    font-weight:600;
+    color:var(--accent-ink);
+    margin:0 0 .4rem;
+  }
+  .cue p{
+    margin:0;
+    font-size:.86rem;
+    color:var(--ink-muted);
+    line-height:1.5;
+  }
+
+  .fork{
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    gap:1.4rem;
+    margin-bottom:1rem;
+  }
+  @media (max-width:720px){ .fork{ grid-template-columns:1fr; } }
+  .fork-card{
+    background:var(--surface);
+    border:1px solid var(--border);
+    border-left:3px solid var(--accent);
+    border-radius:8px;
+    padding:1.1rem 1.25rem;
+  }
+  .fork-card h3{
+    font-family:var(--mono);
+    font-size:.84rem;
+    margin:0 0 .5rem;
+    color:var(--ink);
+  }
+  .fork-card p{
+    margin:0;
+    font-size:.86rem;
+    color:var(--ink-muted);
+  }
+
+  footer{
+    margin-top:3rem;
+    padding-top:1.4rem;
+    border-top:1px solid var(--border);
+    font-family:var(--mono);
+    font-size:.74rem;
+    color:var(--ink-faint);
+    display:flex;
+    justify-content:space-between;
+    flex-wrap:wrap;
+    gap:.5rem;
+  }
+  footer a{ color:var(--ink-faint); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="eyebrow">Task 2 &middot; frame correspondence</div>
+  <h1>runA &rarr; runB, end to end</h1>
+  <p class="dek">
+    Every arrow below is a real array or a real function call in <code>src/routealign/</code> —
+    from four raw camera streams to one <code>mapping.csv</code> row per runA frame. Two
+    descriptors, fused twice (per camera, per descriptor), searched once under a monotonicity
+    constraint, checked four independent ways before it's allowed to answer.
+  </p>
+
+  <div class="legend">
+    <div class="legend-item"><span class="swatch" style="background:#94a3b8"></span>input frames</div>
+    <div class="legend-item"><span class="swatch" style="background:#60a5fa"></span>representation</div>
+    <div class="legend-item"><span class="swatch" style="background:#22d3ee"></span>similarity</div>
+    <div class="legend-item"><span class="swatch" style="background:#2dd4bf"></span>fusion</div>
+    <div class="legend-item"><span class="swatch" style="background:#34d399"></span>search (DTW)</div>
+    <div class="legend-sep"></div>
+    <div class="legend-item"><span class="swatch" style="background:#fb7185"></span>verification</div>
+    <div class="legend-item"><span class="swatch" style="background:#fbbf24"></span>output</div>
+  </div>
+
+  <div class="panel">
+    <div class="corner-tl"></div>
+    <div class="corner-br"></div>
+    <div class="panel-head">
+      <span>fig. 1 — matching pipeline</span>
+      <span>src/routealign/{descriptors,similarity,align,verify,confidence}.py</span>
+    </div>
+    <div class="diagram-scroll">
+      <pre class="mermaid">
+%%{init: {"theme":"base", "themeVariables": {"fontFamily":"IBM Plex Mono, monospace", "fontSize":"13px", "lineColor":"#7fc9ea", "primaryColor":"#0d1c3c", "primaryBorderColor":"#8fd7f4", "primaryTextColor":"#eaf3fb", "edgeLabelBackground":"#0d1c3c", "clusterBkg":"#0d1c3c", "clusterBorder":"#2c4570"}, "flowchart": {"curve":"basis", "nodeSpacing":32, "rankSpacing":50}}}%%
+flowchart TD
+    classDef input fill:#94a3b826,stroke:#94a3b8,color:#eaf3fb,stroke-width:1.4px
+    classDef repr fill:#60a5fa26,stroke:#60a5fa,color:#eaf3fb,stroke-width:1.4px
+    classDef sim fill:#22d3ee26,stroke:#22d3ee,color:#eaf3fb,stroke-width:1.4px
+    classDef fusion fill:#2dd4bf26,stroke:#2dd4bf,color:#eaf3fb,stroke-width:1.4px
+    classDef dtw fill:#34d39926,stroke:#34d399,color:#eaf3fb,stroke-width:1.4px
+    classDef verify fill:#fb718526,stroke:#fb7185,color:#eaf3fb,stroke-width:1.4px
+    classDef output fill:#fbbf2430,stroke:#fbbf24,color:#eaf3fb,stroke-width:2.2px
+
+    RA0["runA &middot; cam0"]:::input
+    RB0["runB &middot; cam0"]:::input
+    RA5["runA &middot; cam5"]:::input
+    RB5["runB &middot; cam5"]:::input
+
+    RA0 & RB0 --> SEQ0["SeqSLAM<br/>descriptor"]:::repr
+    RA0 & RB0 --> DIN0["DINOv2<br/>descriptor"]:::repr
+    RA5 & RB5 --> SEQ5["SeqSLAM<br/>descriptor"]:::repr
+    RA5 & RB5 --> DIN5["DINOv2<br/>descriptor"]:::repr
+
+    SEQ0 --> SIM0SEQ["S_cam0 x seqslam<br/>cosine, w=50"]:::sim
+    DIN0 --> SIM0DIN["S_cam0 x dinov2<br/>cosine, w=500"]:::sim
+    SEQ5 --> SIM5SEQ["S_cam5 x seqslam<br/>cosine, w=50"]:::sim
+    DIN5 --> SIM5DIN["S_cam5 x dinov2<br/>cosine, w=500"]:::sim
+
+    SIM0SEQ & SIM0DIN --> SCAM0["S_cam0"]:::fusion
+    SIM5SEQ & SIM5DIN --> SCAM5["S_cam5"]:::fusion
+    SIM0SEQ & SIM5SEQ --> SSEQ["S_seqslam"]:::fusion
+    SIM0DIN & SIM5DIN --> SDIN["S_dinov2"]:::fusion
+    SCAM0 & SCAM5 --> SJOINT["S_joint"]:::fusion
+
+    SJOINT --> PJOINT["path_joint<br/>dtw_open_ends"]:::dtw
+    SCAM0 --> PCAM0["path_cam0"]:::dtw
+    SCAM5 --> PCAM5["path_cam5"]:::dtw
+    SSEQ --> PSEQ["path_seqslam"]:::dtw
+    SDIN --> PDIN["path_dinov2"]:::dtw
+
+    PJOINT --> MAPDRAFT["path_to_mapping<br/>+ stationary widening"]:::dtw
+
+    SJOINT --> RIDGE["ridge_z"]:::verify
+    PJOINT --> RIDGE
+    SJOINT --> MARGIN["margin_z"]:::verify
+    PJOINT --> MARGIN
+    PCAM0 --> CAMDIS["cam_disagree"]:::verify
+    PCAM5 --> CAMDIS
+    PSEQ --> DESCDIS["desc_disagree"]:::verify
+    PDIN --> DESCDIS
+
+    RIDGE & MARGIN & CAMDIS & DESCDIS --> CONF["fuse_confidence<br/>tier + no-match rule"]:::verify
+
+    MAPDRAFT --> MAPPING["mapping.csv"]:::output
+    CONF --> MAPPING
+      </pre>
+    </div>
+  </div>
+
+  <h2>Two fusions, not one</h2>
+  <p class="section-note">
+    Every raw similarity matrix is fused twice, along two different axes, before <code>S_joint</code>
+    ever exists — this is what makes the two disagreement cues possible below.
+  </p>
+  <div class="fork">
+    <div class="fork-card">
+      <h3>per camera &nbsp;&rarr;&nbsp; S_cam0, S_cam5</h3>
+      <p>Fuses SeqSLAM + DINOv2 <em>within</em> one camera. Comparing the two resulting paths
+      (<code>path_cam0</code> vs. <code>path_cam5</code>) is <code>cam_disagree</code> — do the
+      two physical viewpoints agree on where we are?</p>
+    </div>
+    <div class="fork-card">
+      <h3>per descriptor &nbsp;&rarr;&nbsp; S_seqslam, S_dinov2</h3>
+      <p>Fuses cam0 + cam5 <em>within</em> one descriptor. Comparing those two paths
+      (<code>path_seqslam</code> vs. <code>path_dinov2</code>) is <code>desc_disagree</code> — do
+      the classical and the learned descriptor agree?</p>
+    </div>
+  </div>
+
+  <h2>Four independent checks, one abstention rule</h2>
+  <p class="section-note">
+    Computed only after <code>path_joint</code> is fixed — none of the four can see or influence
+    the DTW search itself, so a row failing all four is a genuinely different signal than a row
+    that just has low raw similarity.
+  </p>
+  <div class="cue-grid">
+    <div class="cue">
+      <p class="cue-name">ridge_z</p>
+      <p>Mean of <code>S_joint</code> along the path's own diagonal trajectory, &plusmn;5 rows. Is
+      the claimed match strong on its own terms?</p>
+    </div>
+    <div class="cue">
+      <p class="cue-name">margin_z</p>
+      <p>Claimed similarity minus the best alternative outside a &plusmn;30-column band. Strong
+      but <em>not distinctive</em> reads differently from strong <em>and</em> distinctive.</p>
+    </div>
+    <div class="cue">
+      <p class="cue-name">cam_disagree</p>
+      <p>|<code>path_cam0</code> &minus; <code>path_cam5</code>| in columns, this row. Two
+      independent physical views of the same place.</p>
+    </div>
+    <div class="cue">
+      <p class="cue-name">desc_disagree</p>
+      <p>|<code>path_seqslam</code> &minus; <code>path_dinov2</code>| in columns, this row. A
+      classical and a learned read of the same pixels.</p>
+    </div>
+  </div>
+
+  <footer>
+    <span>routealign &middot; src/routealign/{descriptors,similarity,align,verify,confidence}.py</span>
+    <span>generated from the shipped fusion path, not a simplification</span>
+  </footer>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<script>
+  mermaid.initialize({ startOnLoad: true });
+</script>
+</body>
+</html>
